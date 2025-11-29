@@ -37,6 +37,7 @@ class HelpdeskClient(Protocol):
     async def create_conversation(
         self,
         user_id: str,
+        user_name: str,
         message_text: Optional[str] = None,
         attachments: Optional[list[dict]] = None,
     ) -> Optional[dict]:

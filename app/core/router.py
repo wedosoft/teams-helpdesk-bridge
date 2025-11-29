@@ -221,10 +221,22 @@ class MessageRouter:
             logger.error("No user info in message")
             return None
 
-        # 사용자 프로필
+        # 사용자 프로필 (기본 + 확장 정보)
         properties = {}
         if user.tenant_id:
             properties["tenant_id"] = user.tenant_id
+
+        # Graph API에서 수집된 확장 정보 추가
+        if user.job_title:
+            properties["job_title"] = user.job_title
+        if user.department:
+            properties["department"] = user.department
+        if user.mobile_phone:
+            properties["mobile_phone"] = user.mobile_phone
+        if user.office_phone:
+            properties["office_phone"] = user.office_phone
+        if user.office_location:
+            properties["office_location"] = user.office_location
 
         # 1. 플랫폼 사용자 생성/조회
         platform_user_id = await client.get_or_create_user(
@@ -258,6 +270,7 @@ class MessageRouter:
         # 3. 대화 생성
         result = await client.create_conversation(
             user_id=platform_user_id,
+            user_name=user.name or "Unknown",
             message_text=message_text,
             attachments=attachments if attachments else None,
         )
@@ -286,7 +299,7 @@ class MessageRouter:
             platform_user_id=platform_user_id,
             is_resolved=False,
             greeting_sent=False,
-            tenant_id=user.tenant_id,
+            tenant_id=tenant.id,  # DB의 tenant UUID 사용
         )
 
         return await self.store.upsert(mapping)
@@ -473,19 +486,54 @@ class MessageRouter:
         mapping: ConversationMapping,
         agent_name: Optional[str] = None,
     ) -> None:
-        """첨부파일을 Teams로 전송"""
+        """
+        첨부파일을 Teams로 전송
+
+        - 이미지: HeroCard로 인라인 표시 (캡처 이미지 포함)
+        - 비디오: 링크로 표시
+        - 기타 파일: Adaptive Card로 다운로드 링크 제공
+        """
+        from botbuilder.schema import Attachment, HeroCard, CardImage
+
         for att in attachments:
             if not att.url:
                 continue
 
-            if att.type == "image":
-                image_text = f"![{att.name or 'image'}]({att.url})"
+            # 이미지 타입 확인 (type 필드 또는 content_type 기반)
+            is_image = att.type == "image" or self._is_image_content_type(att.content_type, att.name)
+
+            if is_image:
+                # 이미지는 HeroCard로 인라인 표시 (캡처 이미지 포함 모든 이미지)
+                hero_card = HeroCard(
+                    images=[CardImage(url=att.url, alt=att.name or "image")],
+                )
+                card_attachment = Attachment(
+                    content_type="application/vnd.microsoft.card.hero",
+                    content=hero_card,
+                )
+
+                # 발신자 이름 포함
+                text = f"👤 **{agent_name}**" if agent_name else None
+
                 await self.bot.send_proactive_message(
                     conversation_reference=mapping.conversation_reference,
-                    text=image_text,
-                    sender_name=agent_name,
+                    text=text,
+                    attachments=[card_attachment],
                 )
+
+            elif att.type == "video" or self._is_video_content_type(att.content_type, att.name):
+                # 비디오는 마크다운 링크로 전송
+                display_name = att.name or "video"
+                text = f"👤 **{agent_name}**\n\n" if agent_name else ""
+                text += f"🎬 [{display_name}]({att.url})"
+
+                await self.bot.send_proactive_message(
+                    conversation_reference=mapping.conversation_reference,
+                    text=text,
+                )
+
             else:
+                # 일반 파일은 Adaptive Card로 다운로드 링크 제공
                 card = build_file_card(
                     filename=att.name or "file",
                     file_url=att.url,
@@ -496,6 +544,30 @@ class MessageRouter:
                     card=card,
                     sender_name=agent_name,
                 )
+
+    def _is_image_content_type(self, content_type: Optional[str], filename: Optional[str]) -> bool:
+        """이미지 content_type 또는 파일 확장자 확인"""
+        if content_type and content_type.lower().startswith("image/"):
+            return True
+
+        if filename:
+            image_exts = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico", ".tiff", ".heic", ".heif"]
+            lower_name = filename.lower()
+            return any(lower_name.endswith(ext) for ext in image_exts)
+
+        return False
+
+    def _is_video_content_type(self, content_type: Optional[str], filename: Optional[str]) -> bool:
+        """비디오 content_type 또는 파일 확장자 확인"""
+        if content_type and content_type.lower().startswith("video/"):
+            return True
+
+        if filename:
+            video_exts = [".mp4", ".webm", ".mov", ".avi", ".mkv", ".m4v", ".wmv"]
+            lower_name = filename.lower()
+            return any(lower_name.endswith(ext) for ext in video_exts)
+
+        return False
 
 
 # ===== 싱글톤 =====

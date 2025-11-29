@@ -1,0 +1,85 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "1.0.3",
+  "id": "be1747e3-28d1-41cd-b655-6cce4f188a8c",
+  "packageName": "com.wedosoft.helpdesk",
+  "developer": {
+    "name": "We Do Soft",
+    "websiteUrl": "https://wedosoft.net",
+    "privacyUrl": "https://wedosoft.net/privacy",
+    "termsOfUseUrl": "https://wedosoft.net/terms"
+  },
+  "name": {
+    "short": "IT Helpdesk",
+    "full": "IT Helpdesk - Freshchat/Zendesk Bridge"
+  },
+  "description": {
+    "short": "Teams에서 IT 헬프데스크와 채팅하세요",
+    "full": "Microsoft Teams에서 IT 헬프데스크(Freshchat, Zendesk)와 직접 연결되는 채팅 브릿지입니다. 사용자는 Teams를 떠나지 않고도 IT 지원을 받을 수 있으며, 상담원은 기존 헬프데스크 솔루션에서 응대할 수 있습니다."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#5558AF",
+  "bots": [
+    {
+      "botId": "be1747e3-28d1-41cd-b655-6cce4f188a8c",
+      "scopes": ["personal", "team", "groupchat"],
+      "supportsFiles": true,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": ["personal"],
+          "commands": [
+            {
+              "title": "help",
+              "description": "도움말 보기"
+            },
+            {
+              "title": "status",
+              "description": "현재 상담 상태 확인"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": [
+    "ameer-timberless-paragogically.ngrok-free.dev",
+    "*.botframework.com",
+    "*.ngrok-free.dev"
+  ],
+  "webApplicationInfo": {
+    "id": "be1747e3-28d1-41cd-b655-6cce4f188a8c",
+    "resource": "api://ameer-timberless-paragogically.ngrok-free.dev/be1747e3-28d1-41cd-b655-6cce4f188a8c"
+  },
+  "authorization": {
+    "permissions": {
+      "resourceSpecific": [
+        {
+          "name": "TeamMember.Read.Group",
+          "type": "Application"
+        }
+      ],
+      "orgWide": {
+        "permissions": [
+          {
+            "resourceAppId": "00000003-0000-0000-c000-000000000000",
+            "resourceAccess": [
+              {
+                "id": "df021288-bdef-4463-88db-98f22de89214",
+                "type": "Role"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

@@ -31,10 +31,10 @@ class Database:
             .select("*")
             .eq("teams_conversation_id", teams_conversation_id)
             .eq("platform", platform)
-            .maybe_single()
+            .limit(1)
             .execute()
         )
-        return result.data
+        return result.data[0] if result.data else None
 
     async def get_conversation_by_platform_id(
         self, platform_conversation_id: str, platform: str
@@ -45,10 +45,10 @@ class Database:
             .select("*")
             .eq("platform_conversation_id", platform_conversation_id)
             .eq("platform", platform)
-            .maybe_single()
+            .limit(1)
             .execute()
         )
-        return result.data
+        return result.data[0] if result.data else None
 
     async def upsert_conversation(self, data: dict) -> dict:
         """대화 매핑 생성/업데이트"""
@@ -77,10 +77,10 @@ class Database:
             self.client.table("user_profiles")
             .select("*")
             .eq("teams_user_id", teams_user_id)
-            .maybe_single()
+            .limit(1)
             .execute()
         )
-        return result.data
+        return result.data[0] if result.data else None
 
     async def upsert_user_profile(self, data: dict) -> dict:
         """사용자 프로필 생성/업데이트"""
@@ -99,10 +99,10 @@ class Database:
             self.client.table("tenants")
             .select("*")
             .eq("teams_tenant_id", teams_tenant_id)
-            .maybe_single()
+            .limit(1)
             .execute()
         )
-        return result.data
+        return result.data[0] if result.data else None
 
     async def upsert_tenant(self, data: dict) -> dict:
         """테넌트 생성/업데이트"""

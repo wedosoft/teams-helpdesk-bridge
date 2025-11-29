@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IT Helpdesk</title>
+    <script src="https://res.cdn.office.net/teams-js/2.19.0/js/MicrosoftTeams.min.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 24px;
+            text-align: center;
+        }
+        .icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #5558AF, #7B7ED8);
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+            font-size: 36px;
+            color: white;
+        }
+        h1 {
+            font-size: 24px;
+            margin-bottom: 8px;
+            color: #333;
+        }
+        .status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 16px;
+        }
+        .status.connected {
+            background-color: #e8f5e9;
+            color: #2e7d32;
+        }
+        .status.disconnected {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+        .info-card {
+            background: #f5f5f5;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 16px 0;
+            text-align: left;
+        }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+        }
+        .info-label {
+            color: #666;
+        }
+        .info-value {
+            font-weight: 600;
+        }
+        .instructions {
+            text-align: left;
+            margin-top: 24px;
+            padding: 16px;
+            background: #fff8e1;
+            border-radius: 8px;
+            border-left: 4px solid #ffc107;
+        }
+        .instructions h3 {
+            font-size: 14px;
+            margin-bottom: 8px;
+            color: #f57c00;
+        }
+        .instructions p {
+            font-size: 13px;
+            color: #666;
+            line-height: 1.5;
+        }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 16px;
+        }
+        .btn-primary {
+            background-color: #5558AF;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">?</div>
+        <h1>IT Helpdesk</h1>
+        <span class="status connected" id="status">연결됨</span>
+
+        <div class="info-card" id="info-card">
+            <div class="info-row">
+                <span class="info-label">플랫폼</span>
+                <span class="info-value" id="platform">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">봇 이름</span>
+                <span class="info-value" id="bot-name">-</span>
+            </div>
+        </div>
+
+        <div class="instructions">
+            <h3>사용 방법</h3>
+            <p>
+                1. 왼쪽 채팅 목록에서 "IT Helpdesk" 봇을 찾으세요.<br>
+                2. 봇에게 메시지를 보내면 헬프데스크 상담원에게 전달됩니다.<br>
+                3. 상담원의 답변은 이 봇을 통해 받게 됩니다.
+            </p>
+        </div>
+    </div>
+
+    <script>
+        async function loadConfig() {
+            try {
+                await microsoftTeams.app.initialize();
+                const context = await microsoftTeams.app.getContext();
+                const tenantId = context.user?.tenant?.id || '';
+
+                const response = await fetch('/api/admin/config', {
+                    headers: { 'X-Tenant-ID': tenantId }
+                });
+                const data = await response.json();
+
+                if (data.is_configured) {
+                    document.getElementById('platform').textContent =
+                        data.platform === 'freshchat' ? 'Freshchat' : 'Zendesk';
+                    document.getElementById('bot-name').textContent = data.bot_name;
+                    document.getElementById('status').textContent = '연결됨';
+                    document.getElementById('status').className = 'status connected';
+                } else {
+                    document.getElementById('status').textContent = '설정 필요';
+                    document.getElementById('status').className = 'status disconnected';
+                }
+            } catch (e) {
+                console.error('Failed to load config:', e);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', loadConfig);
+    </script>
+</body>
+</html>

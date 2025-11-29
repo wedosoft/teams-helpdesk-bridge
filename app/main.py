@@ -1,8 +1,10 @@
 """FastAPI 앱 진입점"""
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.utils.logger import setup_logging, get_logger
@@ -74,6 +76,39 @@ app.include_router(zendesk_router, prefix=f"{API_PREFIX}/webhook/zendesk", tags=
 # Admin API (Teams Tab 설정용)
 from app.admin.routes import router as admin_router
 app.include_router(admin_router, prefix=f"{API_PREFIX}/admin", tags=["Admin"])
+
+# Admin OAuth (관리자 포털 인증)
+from app.admin.oauth import router as oauth_router
+app.include_router(oauth_router, prefix="/admin", tags=["Admin OAuth"])
+
+
+# ===== 정적 파일 및 Tab 페이지 =====
+
+# 정적 파일 디렉토리
+STATIC_DIR = Path(__file__).parent / "static"
+
+# Tab 설정 페이지
+@app.get("/tab/config")
+async def tab_config():
+    """Teams Tab 설정 페이지"""
+    return FileResponse(STATIC_DIR / "config.html")
+
+
+@app.get("/tab/content")
+async def tab_content():
+    """Teams Tab 콘텐츠 페이지 (설정 완료 후 표시)"""
+    return FileResponse(STATIC_DIR / "content.html")
+
+
+@app.get("/admin/setup")
+async def admin_setup():
+    """관리자 설정 페이지 (OAuth 로그인 후)"""
+    return FileResponse(STATIC_DIR / "admin-setup.html")
+
+
+# 정적 파일 서빙 (CSS, JS 등)
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 # ===== 에러 핸들러 =====

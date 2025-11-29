@@ -19,10 +19,13 @@ class Settings(BaseSettings):
     port: int = 8000
     public_url: str = "http://localhost:8000"
 
-    # Bot Framework
+    # Bot Framework / Azure AD App
     bot_app_id: str = ""
     bot_app_password: str = ""
     bot_tenant_id: str = "common"
+
+    # Admin OAuth (same Azure AD App)
+    oauth_redirect_uri: str = ""  # e.g., https://your-domain/admin/callback
 
     # Supabase
     supabase_url: str = ""

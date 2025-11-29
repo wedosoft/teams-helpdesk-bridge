@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IT Helpdesk 설정</title>
+    <script src="https://res.cdn.office.net/teams-js/2.19.0/js/MicrosoftTeams.min.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 24px;
+        }
+        h1 {
+            font-size: 24px;
+            margin-bottom: 8px;
+            color: #5558AF;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 24px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: #444;
+        }
+        .help-text {
+            font-size: 12px;
+            color: #888;
+            margin-top: 4px;
+        }
+        input, select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #5558AF;
+            box-shadow: 0 0 0 2px rgba(85, 88, 175, 0.2);
+        }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .btn-primary {
+            background-color: #5558AF;
+            color: white;
+        }
+        .btn-primary:hover {
+            background-color: #4448a0;
+        }
+        .btn-primary:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .btn-secondary {
+            background-color: #e0e0e0;
+            color: #333;
+            margin-right: 10px;
+        }
+        .btn-secondary:hover {
+            background-color: #d0d0d0;
+        }
+        .platform-tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #eee;
+        }
+        .platform-tab {
+            padding: 12px 24px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            font-weight: 600;
+            color: #666;
+        }
+        .platform-tab.active {
+            border-bottom-color: #5558AF;
+            color: #5558AF;
+        }
+        .platform-tab:hover:not(.active) {
+            color: #444;
+        }
+        .platform-config {
+            display: none;
+        }
+        .platform-config.active {
+            display: block;
+        }
+        .channel-list {
+            margin-top: 16px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .channel-item {
+            padding: 12px 16px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+        }
+        .channel-item:last-child {
+            border-bottom: none;
+        }
+        .channel-item:hover {
+            background-color: #f5f5f5;
+        }
+        .channel-item.selected {
+            background-color: #e8e9f5;
+        }
+        .channel-item input[type="radio"] {
+            width: auto;
+            margin-right: 12px;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+        .error {
+            background-color: #fee;
+            color: #c00;
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 16px;
+        }
+        .success {
+            background-color: #efe;
+            color: #060;
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 16px;
+        }
+        .actions {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 24px;
+            padding-top: 16px;
+            border-top: 1px solid #eee;
+        }
+        .step {
+            display: none;
+        }
+        .step.active {
+            display: block;
+        }
+        .step-indicator {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 24px;
+        }
+        .step-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background-color: #ddd;
+            margin: 0 6px;
+        }
+        .step-dot.active {
+            background-color: #5558AF;
+        }
+        .step-dot.completed {
+            background-color: #4caf50;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>IT Helpdesk 설정</h1>
+        <p class="subtitle">헬프데스크 플랫폼을 연결하세요</p>
+
+        <div class="step-indicator">
+            <div class="step-dot active" id="dot-1"></div>
+            <div class="step-dot" id="dot-2"></div>
+            <div class="step-dot" id="dot-3"></div>
+        </div>
+
+        <div id="error-message" class="error" style="display: none;"></div>
+        <div id="success-message" class="success" style="display: none;"></div>
+
+        <!-- Step 1: 플랫폼 선택 -->
+        <div class="step active" id="step-1">
+            <h2 style="margin-bottom: 16px;">플랫폼 선택</h2>
+            <div class="platform-tabs">
+                <div class="platform-tab active" data-platform="freshchat">Freshchat</div>
+                <div class="platform-tab" data-platform="zendesk">Zendesk</div>
+            </div>
+
+            <!-- Freshchat 설정 -->
+            <div class="platform-config active" id="freshchat-config">
+                <div class="form-group">
+                    <label for="freshchat-api-key">1. API Key *</label>
+                    <input type="password" id="freshchat-api-key" placeholder="Freshchat API Key를 입력하세요">
+                    <p class="help-text">Freshchat Admin > Settings > API Tokens에서 확인</p>
+                </div>
+
+                <div class="form-group" style="background: #f0f7ff; padding: 16px; border-radius: 8px; border-left: 4px solid #5558AF;">
+                    <label style="margin-bottom: 8px;">2. Webhook URL 설정</label>
+                    <p style="font-size: 13px; color: #666; margin-bottom: 8px;">Freshchat Admin > Settings > Webhooks에서 아래 URL을 입력하세요:</p>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <input type="text" id="freshchat-webhook-url" readonly style="font-family: monospace; font-size: 12px; background: #fff;">
+                        <button type="button" class="btn btn-secondary" onclick="copyWebhookUrl()" style="white-space: nowrap; margin: 0;">복사</button>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="freshchat-webhook-key">3. Webhook Public Key (선택)</label>
+                    <textarea id="freshchat-webhook-key" rows="3" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 11px;" placeholder="-----BEGIN PUBLIC KEY-----&#10;...&#10;-----END PUBLIC KEY-----"></textarea>
+                    <p class="help-text">Freshchat Webhooks 페이지 하단의 RSA PUBLIC KEY 복사 (보안 강화용)</p>
+                </div>
+
+                <button class="btn btn-primary" id="btn-verify-freshchat">API Key 확인 및 다음</button>
+            </div>
+
+            <!-- Zendesk 설정 -->
+            <div class="platform-config" id="zendesk-config">
+                <div class="form-group">
+                    <label for="zendesk-subdomain">서브도메인 *</label>
+                    <input type="text" id="zendesk-subdomain" placeholder="예: mycompany">
+                    <p class="help-text">https://<strong>mycompany</strong>.zendesk.com</p>
+                </div>
+                <div class="form-group">
+                    <label for="zendesk-email">관리자 이메일 *</label>
+                    <input type="email" id="zendesk-email" placeholder="admin@company.com">
+                </div>
+                <div class="form-group">
+                    <label for="zendesk-api-token">API Token *</label>
+                    <input type="password" id="zendesk-api-token" placeholder="Zendesk API Token">
+                    <p class="help-text">Zendesk Admin > Apps and integrations > APIs > Zendesk API</p>
+                </div>
+                <button class="btn btn-primary" id="btn-verify-zendesk">연결 확인</button>
+            </div>
+        </div>
+
+        <!-- Step 2: 채널 선택 (Freshchat only) -->
+        <div class="step" id="step-2">
+            <h2 style="margin-bottom: 16px;">채널 선택</h2>
+            <p style="margin-bottom: 16px; color: #666;">Teams 메시지를 받을 Freshchat 채널을 선택하세요.</p>
+            <div id="channel-list" class="channel-list">
+                <div class="loading">채널 목록을 불러오는 중...</div>
+            </div>
+            <div class="actions">
+                <button class="btn btn-secondary" id="btn-back-1">이전</button>
+                <button class="btn btn-primary" id="btn-next-2" disabled>다음</button>
+            </div>
+        </div>
+
+        <!-- Step 3: 완료 설정 -->
+        <div class="step" id="step-3">
+            <h2 style="margin-bottom: 16px;">추가 설정 (선택)</h2>
+            <div class="form-group">
+                <label for="bot-name">봇 이름</label>
+                <input type="text" id="bot-name" value="IT Helpdesk">
+            </div>
+            <div class="form-group">
+                <label for="welcome-message">환영 메시지</label>
+                <input type="text" id="welcome-message" value="안녕하세요! IT 헬프데스크입니다. 무엇을 도와드릴까요?">
+            </div>
+            <div class="actions">
+                <button class="btn btn-secondary" id="btn-back-2">이전</button>
+                <button class="btn btn-primary" id="btn-save">저장</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let microsoftTeams;
+        let currentPlatform = 'freshchat';
+        let selectedChannelId = '';
+        let tenantId = '';
+        let freshchatApiKey = '';
+        let channels = [];
+        const BASE_URL = 'https://ameer-timberless-paragogically.ngrok-free.dev';
+
+        // Teams SDK 초기화
+        async function initTeams() {
+            try {
+                await microsoftTeams.app.initialize();
+                const context = await microsoftTeams.app.getContext();
+                tenantId = context.user?.tenant?.id || '';
+                console.log('Teams initialized, tenant:', tenantId);
+                updateWebhookUrl();
+
+                // 설정 저장 핸들러 등록
+                microsoftTeams.pages.config.registerOnSaveHandler((saveEvent) => {
+                    saveConfiguration(saveEvent);
+                });
+
+                // 유효성 상태 초기화
+                microsoftTeams.pages.config.setValidityState(false);
+            } catch (e) {
+                console.log('Not in Teams context, using test mode');
+                // 테스트 모드: URL 파라미터에서 tenantId 가져오기
+                const params = new URLSearchParams(window.location.search);
+                tenantId = params.get('tenantId') || '65e1f49c-c509-471a-9910-6ee6250fe2f6';
+                updateWebhookUrl();
+            }
+        }
+
+        // Webhook URL 업데이트
+        function updateWebhookUrl() {
+            const webhookUrl = `${BASE_URL}/api/webhook/freshchat/${tenantId}`;
+            document.getElementById('freshchat-webhook-url').value = webhookUrl;
+        }
+
+        // Webhook URL 복사
+        function copyWebhookUrl() {
+            const input = document.getElementById('freshchat-webhook-url');
+            input.select();
+            document.execCommand('copy');
+            showSuccess('Webhook URL이 복사되었습니다!');
+        }
+
+        // 플랫폼 탭 전환
+        function switchPlatform(platform) {
+            currentPlatform = platform;
+            document.querySelectorAll('.platform-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.platform === platform);
+            });
+            document.querySelectorAll('.platform-config').forEach(config => {
+                config.classList.toggle('active', config.id === `${platform}-config`);
+            });
+        }
+
+        // 단계 이동
+        function goToStep(stepNum) {
+            document.querySelectorAll('.step').forEach((step, idx) => {
+                step.classList.toggle('active', idx + 1 === stepNum);
+            });
+            document.querySelectorAll('.step-dot').forEach((dot, idx) => {
+                dot.classList.remove('active', 'completed');
+                if (idx + 1 === stepNum) dot.classList.add('active');
+                if (idx + 1 < stepNum) dot.classList.add('completed');
+            });
+        }
+
+        // 에러 표시
+        function showError(message) {
+            const el = document.getElementById('error-message');
+            el.textContent = message;
+            el.style.display = 'block';
+            setTimeout(() => el.style.display = 'none', 5000);
+        }
+
+        // 성공 표시
+        function showSuccess(message) {
+            const el = document.getElementById('success-message');
+            el.textContent = message;
+            el.style.display = 'block';
+            setTimeout(() => el.style.display = 'none', 3000);
+        }
+
+        // Freshchat API Key 검증 및 채널 목록 조회
+        async function verifyFreshchat() {
+            freshchatApiKey = document.getElementById('freshchat-api-key').value.trim();
+            if (!freshchatApiKey) {
+                showError('API Key를 입력하세요.');
+                return;
+            }
+
+            const btn = document.getElementById('btn-verify-freshchat');
+            btn.disabled = true;
+            btn.textContent = '확인 중...';
+
+            try {
+                const response = await fetch('/api/admin/freshchat/channels', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: freshchatApiKey }),
+                });
+                const data = await response.json();
+
+                if (data.valid && data.channels.length > 0) {
+                    channels = data.channels;
+                    renderChannelList();
+                    goToStep(2);
+                } else {
+                    showError(data.error || 'API Key가 유효하지 않습니다.');
+                }
+            } catch (e) {
+                showError('연결에 실패했습니다: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'API Key 확인';
+            }
+        }
+
+        // Zendesk 연결 검증
+        async function verifyZendesk() {
+            const subdomain = document.getElementById('zendesk-subdomain').value.trim();
+            const email = document.getElementById('zendesk-email').value.trim();
+            const apiToken = document.getElementById('zendesk-api-token').value.trim();
+
+            if (!subdomain || !email || !apiToken) {
+                showError('모든 필드를 입력하세요.');
+                return;
+            }
+
+            // Zendesk는 채널 선택이 필요 없으므로 바로 Step 3으로
+            goToStep(3);
+        }
+
+        // 채널 목록 렌더링
+        function renderChannelList() {
+            const container = document.getElementById('channel-list');
+            if (channels.length === 0) {
+                container.innerHTML = '<div class="loading">채널이 없습니다.</div>';
+                return;
+            }
+
+            container.innerHTML = channels.map(ch => `
+                <label class="channel-item" data-id="${ch.id}">
+                    <input type="radio" name="channel" value="${ch.id}">
+                    <span>${ch.name}</span>
+                </label>
+            `).join('');
+
+            // 채널 선택 이벤트
+            container.querySelectorAll('.channel-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    selectedChannelId = item.dataset.id;
+                    container.querySelectorAll('.channel-item').forEach(i => i.classList.remove('selected'));
+                    item.classList.add('selected');
+                    document.getElementById('btn-next-2').disabled = false;
+                });
+            });
+        }
+
+        // 설정 저장
+        async function saveConfiguration(saveEvent) {
+            const botName = document.getElementById('bot-name').value.trim() || 'IT Helpdesk';
+            const welcomeMessage = document.getElementById('welcome-message').value.trim();
+
+            let requestBody = {
+                platform: currentPlatform,
+                bot_name: botName,
+                welcome_message: welcomeMessage,
+            };
+
+            if (currentPlatform === 'freshchat') {
+                const webhookPublicKey = document.getElementById('freshchat-webhook-key').value.trim();
+                requestBody.freshchat = {
+                    api_key: freshchatApiKey,
+                    inbox_id: selectedChannelId,
+                    webhook_public_key: webhookPublicKey || '',
+                };
+            } else {
+                requestBody.zendesk = {
+                    subdomain: document.getElementById('zendesk-subdomain').value.trim(),
+                    email: document.getElementById('zendesk-email').value.trim(),
+                    api_token: document.getElementById('zendesk-api-token').value.trim(),
+                };
+            }
+
+            try {
+                const response = await fetch('/api/admin/config', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Tenant-ID': tenantId,
+                    },
+                    body: JSON.stringify(requestBody),
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || '저장 실패');
+                }
+
+                const data = await response.json();
+
+                if (saveEvent) {
+                    // Teams Tab 설정 완료
+                    microsoftTeams.pages.config.setConfig({
+                        entityId: tenantId,
+                        contentUrl: window.location.origin + '/tab/content',
+                        suggestedDisplayName: 'IT Helpdesk',
+                    });
+                    saveEvent.notifySuccess();
+                } else {
+                    showSuccess('설정이 저장되었습니다!');
+
+                    // 유효성 상태 업데이트 (Teams에서)
+                    if (microsoftTeams?.pages?.config) {
+                        microsoftTeams.pages.config.setValidityState(true);
+                    }
+                }
+            } catch (e) {
+                showError('저장 실패: ' + e.message);
+                if (saveEvent) {
+                    saveEvent.notifyFailure(e.message);
+                }
+            }
+        }
+
+        // 이벤트 리스너 등록
+        document.addEventListener('DOMContentLoaded', async () => {
+            microsoftTeams = window.microsoftTeams;
+            await initTeams();
+
+            // 플랫폼 탭 클릭
+            document.querySelectorAll('.platform-tab').forEach(tab => {
+                tab.addEventListener('click', () => switchPlatform(tab.dataset.platform));
+            });
+
+            // Freshchat 확인
+            document.getElementById('btn-verify-freshchat').addEventListener('click', verifyFreshchat);
+
+            // Zendesk 확인
+            document.getElementById('btn-verify-zendesk').addEventListener('click', verifyZendesk);
+
+            // 이전/다음 버튼
+            document.getElementById('btn-back-1').addEventListener('click', () => goToStep(1));
+            document.getElementById('btn-next-2').addEventListener('click', () => goToStep(3));
+            document.getElementById('btn-back-2').addEventListener('click', () => {
+                if (currentPlatform === 'freshchat') {
+                    goToStep(2);
+                } else {
+                    goToStep(1);
+                }
+            });
+
+            // 저장 버튼
+            document.getElementById('btn-save').addEventListener('click', () => saveConfiguration(null));
+        });
+    </script>
+</body>
+</html>

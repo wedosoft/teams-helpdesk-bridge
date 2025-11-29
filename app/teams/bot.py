@@ -45,6 +45,12 @@ class TeamsUser:
     email: Optional[str] = None
     aad_object_id: Optional[str] = None
     tenant_id: Optional[str] = None
+    # Graph API 확장 정보
+    job_title: Optional[str] = None
+    department: Optional[str] = None
+    mobile_phone: Optional[str] = None
+    office_phone: Optional[str] = None
+    office_location: Optional[str] = None
 
 
 @dataclass
@@ -181,7 +187,7 @@ class TeamsBot:
             )
 
     async def _collect_user_info(self, context: TurnContext) -> TeamsUser:
-        """사용자 정보 수집 (Activity + TeamsInfo)"""
+        """사용자 정보 수집 (Activity + TeamsInfo + Graph API)"""
         activity = context.activity
         from_property = activity.from_property
 
@@ -212,10 +218,54 @@ class TeamsBot:
         if activity.conversation and activity.conversation.tenant_id:
             user.tenant_id = activity.conversation.tenant_id
 
+        # Graph API로 확장 정보 조회 (관리자 동의 완료된 경우)
+        if user.tenant_id and user.aad_object_id:
+            await self._enrich_user_from_graph(user)
+
         return user
 
+    async def _enrich_user_from_graph(self, user: TeamsUser) -> None:
+        """Graph API에서 확장 사용자 정보 조회
+
+        관리자 동의가 완료된 테넌트에서만 동작
+        """
+        try:
+            from app.services.graph import get_graph_service
+
+            graph_service = get_graph_service()
+            profile = await graph_service.get_user_profile(
+                tenant_id=user.tenant_id,
+                aad_object_id=user.aad_object_id,
+            )
+
+            if profile:
+                # 기존 정보 보완 (Graph 정보가 더 정확할 수 있음)
+                user.name = profile.display_name or user.name
+                user.email = profile.email or user.email
+                # 확장 정보 추가
+                user.job_title = profile.job_title
+                user.department = profile.department
+                user.mobile_phone = profile.mobile_phone
+                user.office_phone = profile.office_phone
+                user.office_location = profile.office_location
+
+                logger.debug(
+                    "User profile enriched from Graph API",
+                    user_id=user.id,
+                    has_job_title=bool(user.job_title),
+                    has_department=bool(user.department),
+                )
+
+        except Exception as e:
+            # Graph API 실패는 무시 (기본 정보로 진행)
+            logger.debug(
+                "Failed to enrich user from Graph API",
+                error=str(e),
+                user_id=user.id,
+            )
+
     def _parse_attachments(self, activity: Activity) -> list[TeamsAttachment]:
-        """Activity에서 첨부파일 파싱"""
+        """Activity에서 첨부파일 파싱 (모든 포맷 지원)"""
         attachments: list[TeamsAttachment] = []
 
         if not activity.attachments:
@@ -226,23 +276,86 @@ class TeamsBot:
             if att.content_type and att.content_type.startswith("application/vnd.microsoft"):
                 continue
 
-            # 파일 첨부
-            content_url = att.content_url
+            # 파일 첨부 URL 결정 (여러 위치에서 찾기)
+            content_url = None
+            content_data = att.content if isinstance(att.content, dict) else {}
 
-            # content 객체에서 downloadUrl 추출
-            if not content_url and att.content:
-                if isinstance(att.content, dict):
-                    content_url = att.content.get("downloadUrl")
+            # 1. content_url 직접 사용
+            if att.content_url:
+                content_url = att.content_url
+
+            # 2. content.downloadUrl (파일 첨부)
+            if not content_url and content_data.get("downloadUrl"):
+                content_url = content_data.get("downloadUrl")
+
+            # 3. content.fileUrl (일부 케이스)
+            if not content_url and content_data.get("fileUrl"):
+                content_url = content_data.get("fileUrl")
+
+            # 4. content.url (이미지 첨부)
+            if not content_url and content_data.get("url"):
+                content_url = content_data.get("url")
+
+            # 파일명 결정
+            filename = att.name or content_data.get("name") or content_data.get("fileName")
+            if not filename:
+                # content_type에서 확장자 추론
+                ext = self._get_extension_from_content_type(att.content_type)
+                filename = f"file{ext}"
+
+            # content_type 결정
+            content_type = att.content_type or content_data.get("mimeType") or "application/octet-stream"
 
             if content_url:
                 attachments.append(TeamsAttachment(
-                    name=att.name or "file",
-                    content_type=att.content_type or "application/octet-stream",
+                    name=filename,
+                    content_type=content_type,
                     content_url=content_url,
-                    content=att.content if isinstance(att.content, dict) else None,
+                    content=content_data if content_data else None,
                 ))
 
+                logger.debug(
+                    "Parsed attachment",
+                    name=filename,
+                    content_type=content_type,
+                    has_url=bool(content_url),
+                )
+            else:
+                logger.warning(
+                    "Attachment without downloadable URL",
+                    name=att.name,
+                    content_type=att.content_type,
+                    content_keys=list(content_data.keys()) if content_data else [],
+                )
+
         return attachments
+
+    def _get_extension_from_content_type(self, content_type: Optional[str]) -> str:
+        """content_type에서 파일 확장자 추론"""
+        if not content_type:
+            return ""
+
+        ext_map = {
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/gif": ".gif",
+            "image/webp": ".webp",
+            "image/bmp": ".bmp",
+            "image/svg+xml": ".svg",
+            "application/pdf": ".pdf",
+            "application/zip": ".zip",
+            "text/plain": ".txt",
+            "text/html": ".html",
+            "text/csv": ".csv",
+            "application/json": ".json",
+            "application/xml": ".xml",
+            "video/mp4": ".mp4",
+            "video/webm": ".webm",
+            "audio/mpeg": ".mp3",
+            "audio/wav": ".wav",
+        }
+
+        return ext_map.get(content_type, "")
 
     def _serialize_conversation_reference(self, ref: ConversationReference) -> dict:
         """ConversationReference를 JSON 직렬화 가능한 dict로 변환"""
@@ -441,7 +554,7 @@ class TeamsBot:
         attachment: TeamsAttachment,
     ) -> Optional[tuple[bytes, str, str]]:
         """
-        Teams 첨부파일 다운로드
+        Teams 첨부파일 다운로드 (다중 URL 소스 시도)
 
         Args:
             context: TurnContext (인증 토큰용)
@@ -450,61 +563,246 @@ class TeamsBot:
         Returns:
             (file_buffer, content_type, filename) 또는 None
         """
-        if not attachment.content_url:
-            return None
+        # URL 후보 수집 (우선순위 순)
+        candidates: list[dict] = []
+        content_data = attachment.content or {}
 
-        try:
-            # Teams 첨부파일 다운로드 URL 결정
-            download_url = attachment.content_url
+        # 1. contentUrl (인증 필요)
+        if attachment.content_url:
+            candidates.append({
+                "url": attachment.content_url,
+                "label": "contentUrl",
+                "requires_auth": True,
+            })
 
-            # content에 downloadUrl이 있으면 우선 사용
-            if attachment.content and attachment.content.get("downloadUrl"):
-                download_url = attachment.content["downloadUrl"]
+        # 2. content 내 대체 URL들 (인증 불필요)
+        alt_urls = [
+            ("downloadUrl", content_data.get("downloadUrl")),
+            ("download-url", content_data.get("download-url")),
+            ("fileUrl", content_data.get("fileUrl")),
+            ("file-url", content_data.get("file-url")),
+            ("contentUrl", content_data.get("contentUrl")),
+            ("content-url", content_data.get("content-url")),
+            ("url", content_data.get("url")),
+        ]
 
-            # 인증 토큰 획득
-            token = await self._get_attachment_token(context)
+        for key, value in alt_urls:
+            if isinstance(value, str) and value.startswith("http"):
+                candidates.append({
+                    "url": value,
+                    "label": key,
+                    "requires_auth": False,
+                })
 
-            async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
-                headers = {}
-                if token:
-                    headers["Authorization"] = f"Bearer {token}"
-
-                response = await client.get(download_url, headers=headers)
-                response.raise_for_status()
-
-                content_type = response.headers.get("content-type", attachment.content_type)
-
-                logger.debug(
-                    "Downloaded Teams attachment",
-                    filename=attachment.name,
-                    size=len(response.content),
-                    content_type=content_type,
-                )
-
-                return (response.content, content_type, attachment.name)
-
-        except Exception as e:
-            logger.error(
-                "Failed to download Teams attachment",
-                filename=attachment.name,
-                url=attachment.content_url[:100],
-                error=str(e),
+        if not candidates:
+            logger.warning(
+                "No downloadable URL found for attachment",
+                name=attachment.name,
+                content_keys=list(content_data.keys()),
             )
             return None
 
+        # 토큰 획득 (한 번만)
+        token = await self._get_attachment_token(context)
+        last_error = None
+
+        for candidate in candidates:
+            try:
+                headers = {
+                    "User-Agent": "Microsoft-BotFramework/3.0 (Python)",
+                    "Accept": "*/*",
+                }
+
+                if candidate["requires_auth"] and token:
+                    headers["Authorization"] = f"Bearer {token}"
+
+                async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+                    response = await client.get(candidate["url"], headers=headers)
+                    response.raise_for_status()
+
+                    # content_type 결정 (다운로드 응답 우선)
+                    downloaded_ct = response.headers.get("content-type")
+                    initial_ct = (attachment.content_type or "").lower()
+
+                    # 이미지 타입 보존 로직 (Node.js 참조)
+                    resolved_ct = self._resolve_content_type(
+                        downloaded_ct=downloaded_ct,
+                        initial_ct=initial_ct,
+                        filename=attachment.name,
+                    )
+
+                    logger.debug(
+                        "Downloaded Teams attachment",
+                        filename=attachment.name,
+                        size=len(response.content),
+                        content_type=resolved_ct,
+                        source=candidate["label"],
+                    )
+
+                    return (response.content, resolved_ct, attachment.name)
+
+            except Exception as e:
+                last_error = e
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                logger.warning(
+                    f"Download attempt failed ({candidate['label']})",
+                    url=candidate["url"][:80],
+                    status=status,
+                    error=str(e),
+                )
+
+        logger.error(
+            "Failed to download Teams attachment after all attempts",
+            filename=attachment.name,
+            error=str(last_error) if last_error else "Unknown error",
+        )
+        return None
+
+    def _resolve_content_type(
+        self,
+        downloaded_ct: Optional[str],
+        initial_ct: str,
+        filename: str,
+    ) -> str:
+        """
+        최종 content_type 결정 (이미지 타입 보존)
+
+        우선순위:
+        1. 초기 타입이 image/*이고 다운로드가 generic이면 → 파일명에서 추론 또는 image/png 기본값
+        2. 다운로드된 content_type 사용
+        3. 초기 content_type 사용
+        4. 파일명에서 추론
+        5. application/octet-stream
+        """
+        is_image_initial = initial_ct.startswith("image/") or initial_ct == "image/*"
+        downloaded_is_generic = not downloaded_ct or downloaded_ct == "application/octet-stream"
+
+        if is_image_initial and downloaded_is_generic:
+            # 이미지 타입 보존 - 파일명에서 추론 시도
+            detected = self._detect_content_type_from_filename(filename)
+            if detected and detected.startswith("image/"):
+                return detected
+            return "image/png"  # 기본값
+
+        if downloaded_ct and downloaded_ct != "application/octet-stream":
+            return downloaded_ct
+
+        if initial_ct and initial_ct != "application/octet-stream":
+            return initial_ct
+
+        # 파일명에서 추론
+        detected = self._detect_content_type_from_filename(filename)
+        if detected:
+            return detected
+
+        return "application/octet-stream"
+
+    def _detect_content_type_from_filename(self, filename: str) -> Optional[str]:
+        """파일명에서 MIME 타입 추론"""
+        if not filename or "." not in filename:
+            return None
+
+        ext = filename.rsplit(".", 1)[-1].lower()
+        mime_map = {
+            "png": "image/png",
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "gif": "image/gif",
+            "webp": "image/webp",
+            "bmp": "image/bmp",
+            "svg": "image/svg+xml",
+            "ico": "image/x-icon",
+            "tiff": "image/tiff",
+            "tif": "image/tiff",
+            "heic": "image/heic",
+            "heif": "image/heif",
+            "pdf": "application/pdf",
+            "doc": "application/msword",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "xls": "application/vnd.ms-excel",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "ppt": "application/vnd.ms-powerpoint",
+            "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "zip": "application/zip",
+            "rar": "application/vnd.rar",
+            "7z": "application/x-7z-compressed",
+            "tar": "application/x-tar",
+            "gz": "application/gzip",
+            "txt": "text/plain",
+            "html": "text/html",
+            "css": "text/css",
+            "js": "application/javascript",
+            "json": "application/json",
+            "xml": "application/xml",
+            "csv": "text/csv",
+            "mp4": "video/mp4",
+            "webm": "video/webm",
+            "mov": "video/quicktime",
+            "avi": "video/x-msvideo",
+            "mkv": "video/x-matroska",
+            "mp3": "audio/mpeg",
+            "wav": "audio/wav",
+            "ogg": "audio/ogg",
+            "m4a": "audio/mp4",
+            "flac": "audio/flac",
+        }
+        return mime_map.get(ext)
+
+    def _is_image_type(self, content_type: str, filename: str) -> bool:
+        """이미지 여부 확인 (content_type + 파일 확장자)"""
+        if content_type and content_type.lower().startswith("image/"):
+            return True
+
+        if filename:
+            image_extensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico", ".tiff", ".heic", ".heif"]
+            lower_name = filename.lower()
+            return any(lower_name.endswith(ext) for ext in image_extensions)
+
+        return False
+
     async def _get_attachment_token(self, context: TurnContext) -> Optional[str]:
-        """첨부파일 다운로드용 토큰 획득"""
+        """첨부파일 다운로드용 토큰 획득 (다중 소스 시도)"""
+        token = None
+
+        # 1. adapter.credentials에서 시도
         try:
-            # TurnContext에서 adapter의 credentials 사용
-            if hasattr(self.adapter, "credentials"):
-                credentials = self.adapter.credentials
-                if credentials:
-                    token = await credentials.get_token()
+            if hasattr(self.adapter, "credentials") and self.adapter.credentials:
+                result = await self.adapter.credentials.get_token()
+                if result:
+                    # 다양한 응답 형태 처리
+                    if isinstance(result, str):
+                        token = result
+                    elif hasattr(result, "token"):
+                        token = result.token
+                    elif hasattr(result, "access_token"):
+                        token = result.access_token
+                    elif isinstance(result, dict):
+                        token = result.get("token") or result.get("access_token") or result.get("value")
+
+                if token:
                     return token
         except Exception as e:
-            logger.warning("Failed to get attachment token", error=str(e))
+            logger.debug("Failed to get token from adapter.credentials", error=str(e))
 
-        return None
+        # 2. ConnectorClient 생성하여 시도 (Fallback)
+        try:
+            service_url = context.activity.service_url
+            if service_url:
+                connector_client = await self.adapter.create_connector_client(service_url)
+                if connector_client and hasattr(connector_client, "config"):
+                    creds = getattr(connector_client.config, "credentials", None)
+                    if creds and hasattr(creds, "get_token"):
+                        result = await creds.get_token()
+                        if isinstance(result, str):
+                            token = result
+                        elif hasattr(result, "token"):
+                            token = result.token
+                        elif hasattr(result, "access_token"):
+                            token = result.access_token
+        except Exception as e:
+            logger.debug("Failed to get token from connector client", error=str(e))
+
+        return token
 
 
 # ===== Adaptive Card 빌더 =====

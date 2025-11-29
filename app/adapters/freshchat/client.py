@@ -40,6 +40,52 @@ class FreshchatClient:
             "Content-Type": "application/json",
         }
 
+    # ===== 채널(Inbox) 목록 =====
+
+    async def get_channels(self) -> list[dict]:
+        """
+        채널(Inbox) 목록 조회
+
+        Returns:
+            채널 목록 [{id, name, enabled, ...}, ...]
+        """
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                response = await client.get(
+                    f"{self.api_url}/channels",
+                    headers=self._get_headers(),
+                )
+                response.raise_for_status()
+                data = response.json()
+                channels = data.get("channels", [])
+
+                # 활성화된 채널만 필터링 및 정리
+                result = []
+                for ch in channels:
+                    if ch.get("enabled", True):
+                        result.append({
+                            "id": ch.get("id"),
+                            "name": ch.get("name", "Unnamed Channel"),
+                            "icon": ch.get("icon", {}).get("url"),
+                        })
+
+                logger.debug("Fetched Freshchat channels", count=len(result))
+                return result
+
+            except Exception as e:
+                logger.error("Failed to get channels", error=str(e))
+                return []
+
+    async def validate_api_key(self) -> bool:
+        """
+        API Key 유효성 검증
+
+        Returns:
+            유효 여부
+        """
+        channels = await self.get_channels()
+        return len(channels) > 0
+
     # ===== 사용자 관리 =====
 
     async def get_or_create_user(

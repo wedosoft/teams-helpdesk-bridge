@@ -4,11 +4,14 @@ Teams Tab에서 호출하는 테넌트 설정 API
 - 테넌트 설정 조회/저장
 - 플랫폼 연동 설정 (Freshchat/Zendesk)
 - 웹훅 URL 생성
+- Graph API 관리자 동의
 """
 from typing import Optional
-from pydantic import BaseModel, Field
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, HTTPException, Header, Depends
+from pydantic import BaseModel, Field
+from fastapi import APIRouter, HTTPException, Header, Depends, Request
+from fastapi.responses import RedirectResponse
 
 from app.config import get_settings
 from app.core.tenant import (
@@ -17,6 +20,7 @@ from app.core.tenant import (
     Platform,
     get_tenant_service,
 )
+from app.services.graph import get_graph_service
 from app.utils.logger import get_logger
 
 router = APIRouter()
@@ -60,6 +64,7 @@ class TenantResponse(BaseModel):
     welcome_message: str
     webhook_url: str
     is_configured: bool
+    graph_consent_granted: bool = False  # Graph API 관리자 동의 여부
 
 
 class WebhookInfo(BaseModel):
@@ -104,6 +109,10 @@ async def get_tenant_config(
     settings = get_settings()
     base_url = settings.public_url or f"http://localhost:{settings.port}"
 
+    # Graph API 동의 상태 확인
+    graph_service = get_graph_service()
+    graph_consent = await graph_service.check_consent_status(tenant_id)
+
     if not tenant:
         return TenantResponse(
             teams_tenant_id=tenant_id,
@@ -112,6 +121,7 @@ async def get_tenant_config(
             welcome_message="",
             webhook_url="",
             is_configured=False,
+            graph_consent_granted=graph_consent,
         )
 
     webhook_url = f"{base_url}/api/webhook/{tenant.platform.value}/{tenant_id}"
@@ -123,6 +133,7 @@ async def get_tenant_config(
         welcome_message=tenant.welcome_message,
         webhook_url=webhook_url,
         is_configured=True,
+        graph_consent_granted=graph_consent,
     )
 
 
@@ -195,6 +206,10 @@ async def save_tenant_config(
         platform=platform.value,
     )
 
+    # Graph API 동의 상태 확인
+    graph_service = get_graph_service()
+    graph_consent = await graph_service.check_consent_status(tenant_id)
+
     return TenantResponse(
         teams_tenant_id=tenant_id,
         platform=platform.value,
@@ -202,6 +217,7 @@ async def save_tenant_config(
         welcome_message=tenant.welcome_message,
         webhook_url=webhook_url,
         is_configured=True,
+        graph_consent_granted=graph_consent,
     )
 
 
@@ -296,4 +312,178 @@ async def validate_connection(
         "valid": True,
         "platform": tenant.platform.value,
         "message": "Connection validated successfully",
+    }
+
+
+# ===== Freshchat 채널 목록 =====
+
+class FreshchatChannelRequest(BaseModel):
+    """Freshchat API Key로 채널 목록 조회"""
+    api_key: str = Field(..., description="Freshchat API Key")
+    api_url: str = Field(default="https://api.freshchat.com/v2", description="API URL")
+
+
+class FreshchatChannel(BaseModel):
+    """Freshchat 채널"""
+    id: str
+    name: str
+    icon: Optional[str] = None
+
+
+class FreshchatChannelsResponse(BaseModel):
+    """Freshchat 채널 목록 응답"""
+    valid: bool
+    channels: list[FreshchatChannel] = []
+    error: Optional[str] = None
+
+
+@router.post("/freshchat/channels", response_model=FreshchatChannelsResponse)
+async def get_freshchat_channels(
+    request: FreshchatChannelRequest,
+) -> FreshchatChannelsResponse:
+    """Freshchat API Key로 채널 목록 조회
+
+    설정 UI에서 API Key 입력 후 채널 목록 표시용
+    """
+    from app.adapters.freshchat.client import FreshchatClient
+
+    try:
+        client = FreshchatClient(
+            api_key=request.api_key,
+            api_url=request.api_url,
+            inbox_id="",  # 채널 조회에는 필요 없음
+        )
+
+        channels = await client.get_channels()
+
+        if not channels:
+            return FreshchatChannelsResponse(
+                valid=False,
+                channels=[],
+                error="API Key가 유효하지 않거나 채널이 없습니다.",
+            )
+
+        return FreshchatChannelsResponse(
+            valid=True,
+            channels=[FreshchatChannel(**ch) for ch in channels],
+        )
+
+    except Exception as e:
+        logger.error("Failed to get Freshchat channels", error=str(e))
+        return FreshchatChannelsResponse(
+            valid=False,
+            channels=[],
+            error=str(e),
+        )
+
+
+# ===== Graph API 관리자 동의 =====
+
+class GraphConsentResponse(BaseModel):
+    """Graph API 동의 상태 응답"""
+    consent_granted: bool
+    consent_url: Optional[str] = None  # 동의가 필요한 경우 URL 제공
+
+
+@router.get("/graph/consent-status", response_model=GraphConsentResponse)
+async def get_graph_consent_status(
+    tenant_id: str = Depends(get_tenant_id_from_header),
+) -> GraphConsentResponse:
+    """Graph API 관리자 동의 상태 확인
+
+    동의가 되어 있으면 consent_granted=True,
+    필요한 경우 동의 URL 제공
+    """
+    graph_service = get_graph_service()
+    consent_granted = await graph_service.check_consent_status(tenant_id)
+
+    if consent_granted:
+        return GraphConsentResponse(consent_granted=True)
+
+    # 동의 URL 생성
+    settings = get_settings()
+    base_url = settings.public_url or f"http://localhost:{settings.port}"
+    redirect_uri = f"{base_url}/api/admin/graph/consent/callback"
+    consent_url = graph_service.get_admin_consent_url(tenant_id, redirect_uri)
+
+    return GraphConsentResponse(
+        consent_granted=False,
+        consent_url=consent_url,
+    )
+
+
+@router.get("/graph/consent")
+async def redirect_to_consent(
+    tenant_id: str = Depends(get_tenant_id_from_header),
+) -> RedirectResponse:
+    """관리자 동의 페이지로 리디렉션
+
+    관리자가 이 URL을 호출하면 Microsoft 동의 페이지로 이동
+    """
+    graph_service = get_graph_service()
+    settings = get_settings()
+    base_url = settings.public_url or f"http://localhost:{settings.port}"
+    redirect_uri = f"{base_url}/api/admin/graph/consent/callback"
+
+    # state에 tenant_id 포함 (콜백에서 확인용)
+    consent_url = graph_service.get_admin_consent_url(tenant_id, redirect_uri)
+    consent_url += f"&state={tenant_id}"
+
+    logger.info("Redirecting to admin consent", tenant_id=tenant_id)
+    return RedirectResponse(url=consent_url)
+
+
+@router.get("/graph/consent/callback")
+async def handle_consent_callback(
+    request: Request,
+    admin_consent: Optional[str] = None,
+    tenant: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+    error_description: Optional[str] = None,
+) -> dict:
+    """Microsoft 동의 콜백 처리
+
+    동의 성공 시: admin_consent=True, tenant={tenant_id}
+    동의 실패 시: error={error_code}, error_description={message}
+    """
+    if error:
+        logger.error(
+            "Admin consent failed",
+            error=error,
+            description=error_description,
+            tenant=tenant or state,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"관리자 동의 실패: {error_description or error}",
+        )
+
+    if admin_consent and admin_consent.lower() == "true":
+        tenant_id = tenant or state
+        logger.info(
+            "Admin consent granted",
+            tenant_id=tenant_id,
+        )
+
+        # 토큰 캐시 무효화하여 새로 획득하도록
+        graph_service = get_graph_service()
+        if tenant_id:
+            graph_service.invalidate_token_cache(tenant_id)
+
+        return {
+            "status": "success",
+            "message": "관리자 동의가 완료되었습니다. 이제 사용자 프로필 확장 정보를 조회할 수 있습니다.",
+            "tenant_id": tenant_id,
+        }
+
+    # 예상치 못한 응답
+    logger.warning(
+        "Unexpected consent callback",
+        params=dict(request.query_params),
+    )
+    return {
+        "status": "unknown",
+        "message": "동의 상태를 확인할 수 없습니다.",
+        "params": dict(request.query_params),
     }

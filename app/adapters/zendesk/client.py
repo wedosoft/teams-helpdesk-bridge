@@ -175,6 +175,7 @@ class ZendeskClient:
     async def create_conversation(
         self,
         user_id: str,
+        user_name: str,
         message_text: Optional[str] = None,
         attachments: Optional[list[dict]] = None,
     ) -> Optional[dict]:
@@ -183,6 +184,7 @@ class ZendeskClient:
 
         Args:
             user_id: Zendesk 사용자 ID
+            user_name: 사용자 표시 이름 (Zendesk에서는 미사용)
             message_text: 초기 메시지
             attachments: 첨부파일 목록
 

@@ -325,6 +325,9 @@ class FreshchatWebhookHandler:
 
     def _parse_message_event(self, data: dict) -> Optional[WebhookEvent]:
         """메시지 생성 이벤트 파싱"""
+        # 디버그: 전체 페이로드 구조 로깅
+        logger.debug("Webhook payload keys", keys=list(data.keys()))
+
         message_data = data.get("message", {})
         message_id = message_data.get("id")
 
@@ -344,11 +347,19 @@ class FreshchatWebhookHandler:
 
         # 대화 정보
         conversation = data.get("conversation", {})
+        logger.debug("Conversation data", conversation=conversation)
+
         conversation_id = conversation.get("conversation_id")
         numeric_id = conversation.get("id")
 
+        # Freshchat API v2에서는 data.data.message.conversation_id 구조일 수 있음
         if not conversation_id and not numeric_id:
-            logger.warning("Missing conversation ID in webhook")
+            # message_data에서 직접 가져오기 시도
+            conversation_id = message_data.get("conversation_id")
+            logger.debug("Trying message_data.conversation_id", conversation_id=conversation_id)
+
+        if not conversation_id and not numeric_id:
+            logger.warning("Missing conversation ID in webhook", data_keys=list(data.keys()))
             return None
 
         # 메시지 파싱
@@ -392,35 +403,52 @@ class FreshchatWebhookHandler:
             # 이미지
             elif "image" in part:
                 image = part["image"]
+                # 다양한 URL 필드 시도 (Node.js poc-bridge.js 참조)
+                image_url = (
+                    image.get("url")
+                    or image.get("download_url")
+                    or image.get("downloadUrl")
+                )
                 attachments.append(ParsedAttachment(
                     type="image",
-                    url=image.get("url"),
+                    url=image_url,
                     name=image.get("name"),
-                    content_type=image.get("content_type", "image/png"),
-                    file_hash=image.get("file_hash"),
-                    file_id=image.get("file_id"),
+                    content_type=image.get("content_type") or image.get("contentType") or "image/png",
+                    file_hash=image.get("file_hash") or image.get("fileHash"),
+                    file_id=image.get("file_id") or image.get("fileId"),
                 ))
 
             # 파일
             elif "file" in part:
                 file = part["file"]
+                # 다양한 URL 필드 시도
+                file_url = (
+                    file.get("url")
+                    or file.get("download_url")
+                    or file.get("downloadUrl")
+                )
                 attachments.append(ParsedAttachment(
                     type="file",
-                    url=file.get("url") or file.get("download_url"),
+                    url=file_url,
                     name=file.get("name"),
-                    content_type=file.get("content_type", "application/octet-stream"),
-                    file_hash=file.get("file_hash"),
-                    file_id=file.get("file_id"),
+                    content_type=file.get("content_type") or file.get("contentType") or "application/octet-stream",
+                    file_hash=file.get("file_hash") or file.get("fileHash"),
+                    file_id=file.get("file_id") or file.get("fileId"),
                 ))
 
             # 비디오
             elif "video" in part:
                 video = part["video"]
+                video_url = (
+                    video.get("url")
+                    or video.get("download_url")
+                    or video.get("downloadUrl")
+                )
                 attachments.append(ParsedAttachment(
                     type="video",
-                    url=video.get("url"),
+                    url=video_url,
                     name=video.get("name"),
-                    content_type=video.get("content_type", "video/mp4"),
+                    content_type=video.get("content_type") or video.get("contentType") or "video/mp4",
                 ))
 
         return ParsedMessage(
