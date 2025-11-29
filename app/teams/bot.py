@@ -764,7 +764,22 @@ class TeamsBot:
         """첨부파일 다운로드용 토큰 획득 (다중 소스 시도)"""
         token = None
 
-        # 1. adapter.credentials에서 시도
+        # 1. MicrosoftAppCredentials로 직접 토큰 획득 (가장 신뢰성 있음)
+        try:
+            from botbuilder.connector import MicrosoftAppCredentials
+
+            credentials = MicrosoftAppCredentials(
+                app_id=self._app_id,
+                password=self._app_password,
+            )
+            token = await credentials.get_token()
+            if token:
+                logger.debug("Got attachment token from MicrosoftAppCredentials")
+                return token
+        except Exception as e:
+            logger.debug("Failed to get token from MicrosoftAppCredentials", error=str(e))
+
+        # 2. adapter.credentials에서 시도
         try:
             if hasattr(self.adapter, "credentials") and self.adapter.credentials:
                 result = await self.adapter.credentials.get_token()
@@ -780,11 +795,12 @@ class TeamsBot:
                         token = result.get("token") or result.get("access_token") or result.get("value")
 
                 if token:
+                    logger.debug("Got attachment token from adapter.credentials")
                     return token
         except Exception as e:
             logger.debug("Failed to get token from adapter.credentials", error=str(e))
 
-        # 2. ConnectorClient 생성하여 시도 (Fallback)
+        # 3. ConnectorClient 생성하여 시도 (Fallback)
         try:
             service_url = context.activity.service_url
             if service_url:
@@ -799,8 +815,13 @@ class TeamsBot:
                             token = result.token
                         elif hasattr(result, "access_token"):
                             token = result.access_token
+                        if token:
+                            logger.debug("Got attachment token from connector client")
         except Exception as e:
             logger.debug("Failed to get token from connector client", error=str(e))
+
+        if not token:
+            logger.warning("Failed to get attachment token from all sources")
 
         return token
 
