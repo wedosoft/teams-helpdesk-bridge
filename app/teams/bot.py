@@ -301,7 +301,18 @@ class TeamsBot:
             if not filename:
                 # content_type에서 확장자 추론
                 ext = self._get_extension_from_content_type(att.content_type)
-                filename = f"file{ext}"
+                if not ext:
+                    # content_type이 없는 경우 URL 경로나 기본값 사용
+                    if content_url:
+                        # URL에서 확장자 추출 시도
+                        from urllib.parse import urlparse
+                        path = urlparse(content_url).path
+                        if "." in path.split("/")[-1]:
+                            ext = "." + path.split(".")[-1].lower()
+                    # 여전히 없으면 이미지 유형인지 추측
+                    if not ext and self._is_image_type(att.content_type, ""):
+                        ext = ".png"
+                filename = f"attachment{ext}" if ext else "attachment"
 
             # content_type 결정
             content_type = att.content_type or content_data.get("mimeType") or "application/octet-stream"

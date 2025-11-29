@@ -178,8 +178,15 @@ class PlatformFactory:
         """웹훅 핸들러 생성"""
         if tenant.platform == Platform.FRESHCHAT:
             if tenant.freshchat and tenant.freshchat.webhook_public_key:
+                public_key = tenant.freshchat.webhook_public_key
+                logger.debug(
+                    "Creating Freshchat webhook handler",
+                    tenant_id=tenant.teams_tenant_id,
+                    key_len=len(public_key) if public_key else 0,
+                    key_preview=public_key[:50] + "..." if public_key and len(public_key) > 50 else public_key,
+                )
                 return FreshchatWebhookHandler(
-                    public_key=tenant.freshchat.webhook_public_key,
+                    public_key=public_key,
                 )
         elif tenant.platform == Platform.ZENDESK:
             # Zendesk 웹훅은 HMAC-SHA256 시크릿 사용 (선택)

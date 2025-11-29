@@ -210,6 +210,13 @@ class FreshchatWebhookHandler:
                 # URL-safe base64 시도
                 signature_bytes = base64.urlsafe_b64decode(signature + "==")
 
+            logger.debug(
+                "Verifying signature",
+                payload_len=len(payload),
+                signature_len=len(signature_bytes),
+                payload_preview=payload[:100].decode('utf-8', errors='replace') if payload else None,
+            )
+
             # RSA-SHA256 with PKCS#1 v1.5 패딩 검증
             public_key.verify(
                 signature_bytes,
@@ -222,7 +229,11 @@ class FreshchatWebhookHandler:
             return True
 
         except InvalidSignature:
-            logger.warning("Invalid webhook signature")
+            logger.warning(
+                "Invalid webhook signature",
+                payload_len=len(payload) if payload else 0,
+                sig_len=len(signature_bytes) if 'signature_bytes' in dir() else 0,
+            )
             return False
         except Exception as e:
             logger.error("Signature verification error", error=str(e))

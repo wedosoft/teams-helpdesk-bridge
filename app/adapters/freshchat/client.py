@@ -539,9 +539,20 @@ class FreshchatClient:
         """
         async with httpx.AsyncClient(timeout=120.0) as client:
             try:
+                # 파일명에 확장자가 없으면 content_type 기반으로 추가
+                safe_filename = self._ensure_filename_extension(filename, content_type)
+
                 files = {
-                    "file": (filename, file_buffer, content_type),
+                    "file": (safe_filename, file_buffer, content_type),
                 }
+
+                logger.debug(
+                    "Uploading file to Freshchat",
+                    original_filename=filename,
+                    safe_filename=safe_filename,
+                    content_type=content_type,
+                    size=len(file_buffer),
+                )
 
                 # Authorization 헤더만 (Content-Type은 multipart로 자동 설정)
                 headers = {"Authorization": f"Bearer {self.api_key}"}
@@ -765,6 +776,56 @@ class FreshchatClient:
                         })
 
         return parts
+
+    def _ensure_filename_extension(self, filename: str, content_type: str) -> str:
+        """파일명에 확장자가 없으면 content_type 기반으로 추가"""
+        if not filename:
+            filename = "attachment"
+
+        # 이미 확장자가 있으면 그대로 반환
+        if "." in filename.split("/")[-1]:
+            return filename
+
+        # content_type에서 확장자 매핑
+        ext_map = {
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/gif": ".gif",
+            "image/webp": ".webp",
+            "image/bmp": ".bmp",
+            "image/svg+xml": ".svg",
+            "application/pdf": ".pdf",
+            "application/zip": ".zip",
+            "application/x-zip-compressed": ".zip",
+            "application/msword": ".doc",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+            "application/vnd.ms-excel": ".xls",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+            "application/vnd.ms-powerpoint": ".ppt",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+            "text/plain": ".txt",
+            "text/html": ".html",
+            "text/csv": ".csv",
+            "application/json": ".json",
+            "application/xml": ".xml",
+            "video/mp4": ".mp4",
+            "video/webm": ".webm",
+            "video/quicktime": ".mov",
+            "audio/mpeg": ".mp3",
+            "audio/wav": ".wav",
+            "application/octet-stream": "",  # 기본값은 확장자 없음
+        }
+
+        ext = ext_map.get(content_type, "")
+        if not ext and content_type:
+            # 매핑에 없으면 content_type 서브타입 사용 (예: image/png -> .png)
+            parts = content_type.split("/")
+            if len(parts) == 2:
+                subtype = parts[1].split(";")[0].strip()
+                if subtype and len(subtype) <= 5 and subtype.isalnum():
+                    ext = f".{subtype}"
+
+        return f"{filename}{ext}" if ext else filename
 
     def _normalize_upload_response(
         self,
