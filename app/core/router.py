@@ -22,6 +22,7 @@ from app.core.store import (
     ConversationMapping,
     get_conversation_store,
 )
+from app.database import Database
 from app.teams.bot import (
     TeamsBot,
     TeamsMessage,
@@ -43,6 +44,7 @@ class MessageRouter:
     def __init__(self):
         self._store: Optional[ConversationStore] = None
         self._bot: Optional[TeamsBot] = None
+        self._db: Optional[Database] = None
 
     @property
     def store(self) -> ConversationStore:
@@ -57,6 +59,13 @@ class MessageRouter:
         if self._bot is None:
             self._bot = get_teams_bot()
         return self._bot
+
+    @property
+    def db(self) -> Database:
+        """Database 클라이언트"""
+        if self._db is None:
+            self._db = Database()
+        return self._db
 
     # ===== Teams → Helpdesk =====
 
@@ -259,12 +268,31 @@ class MessageRouter:
                 downloaded = await self.bot.download_attachment(context, att)
                 if downloaded:
                     file_buffer, content_type, filename = downloaded
+
+                    # 이미지인 경우 Supabase Storage에 업로드하여 공개 URL 획득
+                    public_url = None
+                    if self._is_image_content_type(content_type, filename):
+                        public_url = await self.db.upload_to_storage(
+                            file_buffer=file_buffer,
+                            filename=filename,
+                            content_type=content_type,
+                        )
+                        logger.info(
+                            "Uploaded image to Supabase Storage",
+                            filename=filename,
+                            public_url=public_url,
+                        )
+
+                    # Freshchat에도 업로드 (file_hash 획득용)
                     uploaded = await client.upload_file(
                         file_buffer=file_buffer,
                         filename=filename,
                         content_type=content_type,
                     )
                     if uploaded:
+                        # 공개 URL이 있으면 첨부파일에 추가
+                        if public_url:
+                            uploaded["url"] = public_url
                         attachments.append(uploaded)
 
         # 3. 대화 생성
@@ -326,12 +354,31 @@ class MessageRouter:
                 downloaded = await self.bot.download_attachment(context, att)
                 if downloaded:
                     file_buffer, content_type, filename = downloaded
+
+                    # 이미지인 경우 Supabase Storage에 업로드하여 공개 URL 획득
+                    public_url = None
+                    if self._is_image_content_type(content_type, filename):
+                        public_url = await self.db.upload_to_storage(
+                            file_buffer=file_buffer,
+                            filename=filename,
+                            content_type=content_type,
+                        )
+                        logger.info(
+                            "Uploaded image to Supabase Storage",
+                            filename=filename,
+                            public_url=public_url,
+                        )
+
+                    # Freshchat에도 업로드 (file_hash 획득용)
                     uploaded = await client.upload_file(
                         file_buffer=file_buffer,
                         filename=filename,
                         content_type=content_type,
                     )
                     if uploaded:
+                        # 공개 URL이 있으면 첨부파일에 추가
+                        if public_url:
+                            uploaded["url"] = public_url
                         attachments.append(uploaded)
 
         # 메시지 전송

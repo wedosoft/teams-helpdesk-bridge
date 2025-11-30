@@ -571,8 +571,21 @@ class FreshchatClient:
                 response.raise_for_status()
                 data = response.json()
 
+                logger.info(
+                    "Freshchat upload response",
+                    raw_response=data,
+                    filename=filename,
+                )
+
                 # 응답 정규화 (다양한 응답 형태 처리)
-                return self._normalize_upload_response(data, filename, content_type)
+                normalized = self._normalize_upload_response(data, filename, content_type)
+
+                logger.info(
+                    "Freshchat upload normalized",
+                    normalized=normalized,
+                )
+
+                return normalized
 
             except httpx.HTTPStatusError as e:
                 # Freshchat에서 400/401 원인 파악을 위해 응답 본문을 함께 로깅
@@ -749,46 +762,56 @@ class FreshchatClient:
             parts.append({"text": {"content": message_text}})
 
         if attachments:
+            logger.info(
+                "Building message parts with attachments",
+                attachments=attachments,
+            )
             for att in attachments:
-                # URL이 있는 경우
-                if att.get("url"):
-                    content_type = att.get("content_type", "application/octet-stream")
+                content_type = att.get("content_type", "application/octet-stream")
+                file_hash = att.get("file_hash")
+                file_id = att.get("file_id")
+                url = att.get("url")
+                name = att.get("name", "attachment")
 
-                    if content_type.startswith("image/"):
-                        parts.append({
-                            "image": {
-                                "url": att["url"],
-                            }
-                        })
-                    else:
-                        parts.append({
-                            "file": {
-                                "url": att["url"],
-                                "name": att.get("name", "file"),
-                                "content_type": content_type,
-                            }
-                        })
+                # URL이 있는 경우 → image 타입 사용 (인라인 표시)
+                if url:
+                    image_payload: dict[str, Any] = {"url": url}
 
-                # file_hash/file_id가 있는 경우 (업로드된 파일)
-                elif att.get("file_hash") or att.get("file_id"):
-                    content_type = att.get("content_type", "application/octet-stream")
+                    if content_type:
+                        image_payload["content_type"] = content_type
 
-                    if content_type.startswith("image/"):
-                        parts.append({
-                            "image": {
-                                "file_hash": att.get("file_hash"),
-                                "file_id": att.get("file_id"),
-                            }
-                        })
-                    else:
-                        parts.append({
-                            "file": {
-                                "file_hash": att.get("file_hash"),
-                                "file_id": att.get("file_id"),
-                                "name": att.get("name", "file"),
-                                "content_type": content_type,
-                            }
-                        })
+                    # fileHash/fileId가 있으면 fallback으로 포함
+                    if file_hash:
+                        image_payload["file_hash"] = file_hash
+                    if file_id:
+                        image_payload["file_id"] = file_id
+
+                    parts.append({"image": image_payload})
+
+                # URL 없이 file_hash/file_id만 있는 경우 → file 타입 사용
+                # Freshchat은 URL 없이 image 타입 사용 시 IMAGE_EMPTY_CONTENT 에러 반환
+                elif file_hash or file_id:
+                    file_payload: dict[str, Any] = {"name": name}
+
+                    if content_type:
+                        file_payload["content_type"] = content_type
+
+                    if file_hash:
+                        file_payload["file_hash"] = file_hash
+                    if file_id:
+                        file_payload["file_id"] = file_id
+
+                    parts.append({"file": file_payload})
+
+                else:
+                    logger.warning(
+                        "Skipping attachment without URL or file identifier",
+                        name=name,
+                        keys=list(att.keys()),
+                    )
+
+        if parts:
+            logger.info("Built message parts", parts=parts)
 
         return parts
 

@@ -790,7 +790,7 @@ class TeamsBot:
 
         # 1. MicrosoftAppCredentials로 직접 토큰 획득 (가장 신뢰성 있음)
         try:
-            from botbuilder.connector.auth import MicrosoftAppCredentials
+            from botframework.connector.auth import MicrosoftAppCredentials
 
             credentials = MicrosoftAppCredentials(
                 app_id=self._app_id,

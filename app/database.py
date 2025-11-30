@@ -1,10 +1,14 @@
 """Supabase 데이터베이스 클라이언트"""
+import uuid
 from functools import lru_cache
 from typing import Optional
 
 from supabase import create_client, Client
 
 from app.config import get_settings
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 @lru_cache
@@ -124,3 +128,62 @@ class Database:
         self.client.table("tenants").delete().eq(
             "teams_tenant_id", teams_tenant_id
         ).execute()
+
+    # ===== Storage =====
+
+    async def upload_to_storage(
+        self,
+        file_buffer: bytes,
+        filename: str,
+        content_type: str,
+        bucket: str = "attachments",
+    ) -> Optional[str]:
+        """
+        Supabase Storage에 파일 업로드 후 공개 URL 반환
+
+        Args:
+            file_buffer: 파일 바이너리 데이터
+            filename: 원본 파일명
+            content_type: MIME 타입
+            bucket: 스토리지 버킷 이름
+
+        Returns:
+            공개 URL 또는 None (실패 시)
+        """
+        try:
+            # 고유한 파일 경로 생성 (UUID + 원본 파일명)
+            unique_id = uuid.uuid4().hex[:12]
+            # 파일명에서 특수문자 제거
+            safe_filename = "".join(
+                c if c.isalnum() or c in ".-_" else "_" for c in filename
+            )
+            file_path = f"{unique_id}_{safe_filename}"
+
+            # Storage에 업로드
+            self.client.storage.from_(bucket).upload(
+                path=file_path,
+                file=file_buffer,
+                file_options={"content-type": content_type},
+            )
+
+            # 공개 URL 생성
+            settings = get_settings()
+            public_url = f"{settings.supabase_url}/storage/v1/object/public/{bucket}/{file_path}"
+
+            logger.info(
+                "Uploaded file to storage",
+                bucket=bucket,
+                file_path=file_path,
+                content_type=content_type,
+            )
+
+            return public_url
+
+        except Exception as e:
+            logger.error(
+                "Failed to upload to storage",
+                error=str(e),
+                filename=filename,
+                bucket=bucket,
+            )
+            return None
