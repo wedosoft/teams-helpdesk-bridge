@@ -557,15 +557,16 @@ class FreshchatClient:
                 # Authorization 헤더만 (Content-Type은 multipart로 자동 설정)
                 headers = {"Authorization": f"Bearer {self.api_key}"}
 
-                # Freshchat은 파일/이미지 업로드 엔드포인트가 분리되어 있음
-                # 이미지면 CDN 최적화를 위해 images/upload 사용, 그 외에는 files/upload 사용
-                is_image = content_type.startswith("image/")
-                upload_path = "/images/upload" if is_image else "/files/upload"
+                # Freshchat /files/upload 사용 (이미지/파일 모두 동일)
+                # 레거시 코드에서 검증된 방식 - /images/upload는 특정 조건에서 실패할 수 있음
+                upload_files = {
+                    "file": (safe_filename, file_buffer, content_type),
+                }
 
                 response = await client.post(
-                    f"{self.api_url}{upload_path}",
+                    f"{self.api_url}/files/upload",
                     headers=headers,
-                    files=files,
+                    files=upload_files,
                 )
                 response.raise_for_status()
                 data = response.json()
