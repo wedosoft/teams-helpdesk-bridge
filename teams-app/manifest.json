@@ -1,7 +1,7 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
   "manifestVersion": "1.16",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "id": "be1747e3-28d1-41cd-b655-6cce4f188a8c",
   "packageName": "com.wedosoft.helpdesk",
   "developer": {

@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, HTTPException, Header, Depends, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, HTMLResponse
 
 from app.config import get_settings
 from app.core.tenant import (
@@ -433,7 +433,7 @@ async def redirect_to_consent(
     return RedirectResponse(url=consent_url)
 
 
-@router.get("/graph/consent/callback")
+@router.get("/graph/consent/callback", response_class=HTMLResponse)
 async def handle_consent_callback(
     request: Request,
     admin_consent: Optional[str] = None,
@@ -441,11 +441,13 @@ async def handle_consent_callback(
     state: Optional[str] = None,
     error: Optional[str] = None,
     error_description: Optional[str] = None,
-) -> dict:
+) -> HTMLResponse:
     """Microsoft 동의 콜백 처리
 
     동의 성공 시: admin_consent=True, tenant={tenant_id}
     동의 실패 시: error={error_code}, error_description={message}
+
+    팝업 창에서 실행되므로 HTML로 결과를 표시하고 자동으로 창을 닫음
     """
     if error:
         logger.error(
@@ -454,10 +456,30 @@ async def handle_consent_callback(
             description=error_description,
             tenant=tenant or state,
         )
-        raise HTTPException(
-            status_code=400,
-            detail=f"관리자 동의 실패: {error_description or error}",
-        )
+        return HTMLResponse(content=f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>권한 승인 실패</title>
+            <style>
+                body {{ font-family: 'Segoe UI', sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }}
+                .container {{ text-align: center; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 400px; }}
+                .icon {{ font-size: 48px; margin-bottom: 16px; }}
+                h2 {{ color: #c00; margin-bottom: 12px; }}
+                p {{ color: #666; margin-bottom: 20px; }}
+                button {{ background: #5558AF; color: white; border: none; padding: 10px 24px; border-radius: 4px; cursor: pointer; font-size: 14px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="icon">❌</div>
+                <h2>권한 승인 실패</h2>
+                <p>{error_description or error}</p>
+                <button onclick="window.close()">닫기</button>
+            </div>
+        </body>
+        </html>
+        """)
 
     if admin_consent and admin_consent.lower() == "true":
         tenant_id = tenant or state
@@ -471,19 +493,60 @@ async def handle_consent_callback(
         if tenant_id:
             graph_service.invalidate_token_cache(tenant_id)
 
-        return {
-            "status": "success",
-            "message": "관리자 동의가 완료되었습니다. 이제 사용자 프로필 확장 정보를 조회할 수 있습니다.",
-            "tenant_id": tenant_id,
-        }
+        return HTMLResponse(content="""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>권한 승인 완료</title>
+            <style>
+                body { font-family: 'Segoe UI', sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }
+                .container { text-align: center; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 400px; }
+                .icon { font-size: 48px; margin-bottom: 16px; }
+                h2 { color: #2e7d32; margin-bottom: 12px; }
+                p { color: #666; margin-bottom: 20px; }
+                .closing { color: #888; font-size: 13px; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="icon">✅</div>
+                <h2>권한 승인 완료!</h2>
+                <p>Microsoft Graph API 권한이 승인되었습니다.<br>이제 사용자 프로필 정보를 조회할 수 있습니다.</p>
+                <p class="closing">잠시 후 창이 자동으로 닫힙니다...</p>
+            </div>
+            <script>
+                setTimeout(function() { window.close(); }, 2000);
+            </script>
+        </body>
+        </html>
+        """)
 
     # 예상치 못한 응답
     logger.warning(
         "Unexpected consent callback",
         params=dict(request.query_params),
     )
-    return {
-        "status": "unknown",
-        "message": "동의 상태를 확인할 수 없습니다.",
-        "params": dict(request.query_params),
-    }
+    return HTMLResponse(content="""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>알 수 없는 응답</title>
+        <style>
+            body { font-family: 'Segoe UI', sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }
+            .container { text-align: center; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 400px; }
+            .icon { font-size: 48px; margin-bottom: 16px; }
+            h2 { color: #f57c00; margin-bottom: 12px; }
+            p { color: #666; margin-bottom: 20px; }
+            button { background: #5558AF; color: white; border: none; padding: 10px 24px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="icon">⚠️</div>
+            <h2>응답을 확인할 수 없음</h2>
+            <p>동의 상태를 확인할 수 없습니다. 창을 닫고 다시 시도해주세요.</p>
+            <button onclick="window.close()">닫기</button>
+        </div>
+    </body>
+    </html>
+    """)

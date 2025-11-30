@@ -368,9 +368,17 @@
             <div id="error-message" class="error" style="display: none;"></div>
             <div id="success-message" class="success" style="display: none;"></div>
 
-            <!-- 현재 상태 카드 -->
+            <!-- Step 1: Graph API 권한 승인 -->
+            <div class="card" id="graph-consent-card">
+                <h2>Step 1: Microsoft Graph 권한 승인</h2>
+                <div id="graph-consent-status">
+                    <div class="loading">권한 상태 확인 중...</div>
+                </div>
+            </div>
+
+            <!-- Step 2: 현재 상태 카드 -->
             <div class="card" id="status-card">
-                <h2>연동 상태</h2>
+                <h2>Step 2: 헬프데스크 연동 상태</h2>
                 <div id="current-status">
                     <div class="loading">상태 확인 중...</div>
                 </div>
@@ -491,6 +499,8 @@
                     document.getElementById('login-screen').style.display = 'none';
                     document.getElementById('main-screen').style.display = 'block';
 
+                    // Graph 권한 상태 확인
+                    await checkGraphConsent();
                     // 현재 설정 로드
                     await loadCurrentConfig();
                 } else {
@@ -524,6 +534,78 @@
             input.select();
             document.execCommand('copy');
             showSuccess('Webhook URL이 복사되었습니다!');
+        }
+
+        // Graph API 권한 상태 확인
+        async function checkGraphConsent() {
+            const container = document.getElementById('graph-consent-status');
+            try {
+                const response = await fetch('/api/admin/graph/consent-status', {
+                    headers: { 'X-Tenant-ID': tenantId }
+                });
+                const data = await response.json();
+
+                if (data.consent_granted) {
+                    container.innerHTML = `
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <span class="status-badge configured">✓ 권한 승인됨</span>
+                            <span style="color: #666; font-size: 14px;">사용자 프로필 정보를 조회할 수 있습니다.</span>
+                        </div>
+                        <div style="margin-top: 12px; padding: 12px; background: #f5f5f5; border-radius: 4px; font-size: 13px; color: #666;">
+                            <strong>승인된 권한:</strong> User.Read.All (사용자 프로필 읽기)
+                        </div>
+                    `;
+                } else {
+                    container.innerHTML = `
+                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+                            <span class="status-badge not-configured">권한 승인 필요</span>
+                            <span style="color: #666; font-size: 14px;">사용자 정보 조회를 위해 관리자 권한 승인이 필요합니다.</span>
+                        </div>
+                        <div style="background: #fff8e1; padding: 16px; border-radius: 8px; border-left: 4px solid #ffa000; margin-bottom: 16px;">
+                            <p style="font-size: 14px; color: #333; margin-bottom: 12px;">
+                                <strong>왜 필요한가요?</strong><br>
+                                Teams 사용자의 부서, 직책 등 프로필 정보를 헬프데스크에 전달하기 위해 필요합니다.
+                            </p>
+                            <p style="font-size: 13px; color: #666; margin: 0;">
+                                <strong>요청 권한:</strong> User.Read.All (읽기 전용, 모든 사용자 프로필)
+                            </p>
+                        </div>
+                        <button class="btn btn-primary" onclick="grantGraphConsent()">
+                            🔐 권한 승인하기 (관리자 전용)
+                        </button>
+                        <p style="font-size: 12px; color: #888; margin-top: 8px;">
+                            * Azure AD 전역 관리자 또는 권한이 있는 관리자만 승인할 수 있습니다.
+                        </p>
+                    `;
+                }
+            } catch (e) {
+                console.error('Failed to check Graph consent:', e);
+                container.innerHTML = `
+                    <div class="error">권한 상태를 확인할 수 없습니다. 나중에 다시 시도하세요.</div>
+                `;
+            }
+        }
+
+        // Graph API 권한 승인 (팝업)
+        function grantGraphConsent() {
+            const clientId = 'be1747e3-28d1-41cd-b655-6cce4f188a8c';
+            const redirectUri = encodeURIComponent(window.location.origin + '/api/admin/graph/consent/callback');
+            const consentUrl = `https://login.microsoftonline.com/${tenantId}/adminconsent?client_id=${clientId}&redirect_uri=${redirectUri}&scope=https://graph.microsoft.com/.default`;
+
+            // 팝업으로 열기
+            const popup = window.open(consentUrl, 'graphConsent', 'width=600,height=700,scrollbars=yes');
+
+            // 팝업 닫힘 감지하여 상태 새로고침
+            const checkPopup = setInterval(() => {
+                if (popup.closed) {
+                    clearInterval(checkPopup);
+                    // 잠시 대기 후 상태 새로고침
+                    setTimeout(() => {
+                        checkGraphConsent();
+                        showSuccess('권한 상태를 다시 확인했습니다.');
+                    }, 1000);
+                }
+            }, 500);
         }
 
         // 현재 설정 로드
