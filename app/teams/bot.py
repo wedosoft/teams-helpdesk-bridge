@@ -578,22 +578,12 @@ class TeamsBot:
         candidates: list[dict] = []
         content_data = attachment.content or {}
 
-        # 1. contentUrl (인증 필요)
-        if attachment.content_url:
-            candidates.append({
-                "url": attachment.content_url,
-                "label": "contentUrl",
-                "requires_auth": True,
-            })
-
-        # 2. content 내 대체 URL들 (인증 불필요)
+        # 1. content 내 대체 URL들 (인증 불필요 - 우선 시도)
         alt_urls = [
             ("downloadUrl", content_data.get("downloadUrl")),
             ("download-url", content_data.get("download-url")),
             ("fileUrl", content_data.get("fileUrl")),
             ("file-url", content_data.get("file-url")),
-            ("contentUrl", content_data.get("contentUrl")),
-            ("content-url", content_data.get("content-url")),
             ("url", content_data.get("url")),
         ]
 
@@ -604,6 +594,14 @@ class TeamsBot:
                     "label": key,
                     "requires_auth": False,
                 })
+
+        # 2. contentUrl (Bot Framework 인증 필요 - 마지막 시도)
+        if attachment.content_url:
+            candidates.append({
+                "url": attachment.content_url,
+                "label": "contentUrl",
+                "requires_auth": True,
+            })
 
         if not candidates:
             logger.warning(
@@ -675,12 +673,92 @@ class TeamsBot:
                     error=str(e),
                 )
 
+        # 마지막 시도: Bot Framework Attachments API 사용
+        if attachment.content_url and "attachments" in attachment.content_url:
+            try:
+                result = await self._download_via_connector_api(context, attachment)
+                if result:
+                    return result
+            except Exception as e:
+                logger.warning("Connector API download failed", error=str(e))
+
         logger.error(
             "Failed to download Teams attachment after all attempts",
             filename=attachment.name,
             error=str(last_error) if last_error else "Unknown error",
         )
         return None
+
+    async def _download_via_connector_api(
+        self,
+        context: TurnContext,
+        attachment: TeamsAttachment,
+    ) -> Optional[tuple[bytes, str, str]]:
+        """Bot Framework Attachments API를 통한 다운로드"""
+        try:
+            import re
+            from urllib.parse import urlparse
+
+            content_url = attachment.content_url
+            if not content_url:
+                return None
+
+            # URL에서 attachment ID 추출
+            # 형식: https://.../{conversation_id}/attachments/{attachment_id}/views/original
+            match = re.search(r"/attachments/([^/]+)/views/", content_url)
+            if not match:
+                logger.warning("Could not extract attachment ID from URL", url=content_url[:100])
+                return None
+
+            attachment_id = match.group(1)
+            service_url = context.activity.service_url
+
+            logger.info(
+                "Attempting Connector API download",
+                attachment_id=attachment_id,
+                service_url=service_url[:50] if service_url else None,
+            )
+
+            # ConnectorClient 생성
+            connector_client = await self.adapter.create_connector_client(service_url)
+
+            # Attachments API로 다운로드
+            response = await connector_client.attachments.get_attachment(
+                attachment_id=attachment_id,
+                view_id="original",
+            )
+
+            # 응답이 스트림인 경우 처리
+            if hasattr(response, "read"):
+                file_buffer = response.read()
+            elif hasattr(response, "content"):
+                file_buffer = response.content
+            else:
+                file_buffer = bytes(response) if response else None
+
+            if not file_buffer:
+                logger.warning("Empty response from Connector API")
+                return None
+
+            # content_type 결정
+            content_type = attachment.content_type or "application/octet-stream"
+            if content_type == "application/octet-stream" and attachment.name:
+                detected = self._detect_content_type_from_filename(attachment.name)
+                if detected:
+                    content_type = detected
+
+            logger.info(
+                "Downloaded via Connector API",
+                filename=attachment.name,
+                size=len(file_buffer),
+                content_type=content_type,
+            )
+
+            return (file_buffer, content_type, attachment.name)
+
+        except Exception as e:
+            logger.error("Connector API download error", error=str(e))
+            return None
 
     def _resolve_content_type(
         self,
@@ -784,11 +862,15 @@ class TeamsBot:
 
         return False
 
-    async def _get_attachment_token(self, context: TurnContext) -> Optional[str]:
-        """첨부파일 다운로드용 토큰 획득 (다중 소스 시도)"""
+    async def _get_attachment_token(self, context: TurnContext, service_url: Optional[str] = None) -> Optional[str]:
+        """첨부파일 다운로드용 토큰 획득 (service_url scope 사용)"""
         token = None
 
-        # 1. MicrosoftAppCredentials로 직접 토큰 획득 (가장 신뢰성 있음)
+        # service_url 추출 (Teams 첨부파일 다운로드에 필요)
+        if not service_url:
+            service_url = context.activity.service_url
+
+        # 1. MicrosoftAppCredentials로 service_url scope 토큰 획득
         try:
             from botframework.connector.auth import MicrosoftAppCredentials
 
@@ -796,12 +878,17 @@ class TeamsBot:
                 app_id=self._app_id,
                 password=self._app_password,
             )
-            # get_access_token()이 정확한 메서드명 (not get_token)
-            token = credentials.get_access_token()
+
+            # service_url을 scope로 사용하여 토큰 획득 (Teams 첨부파일용)
+            if service_url:
+                # signed_session을 사용하여 해당 service_url에 대한 토큰 획득
+                token = credentials.get_access_token(force_refresh=True)
+
             if token:
                 logger.info(
                     "Got attachment token from MicrosoftAppCredentials",
                     token_prefix=token[:20] + "..." if token else None,
+                    service_url=service_url[:50] if service_url else None,
                 )
                 return token
         except Exception as e:
