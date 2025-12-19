@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IT Helpdesk - Admin Setup</title>
+    <title>Legal Help - Admin Setup</title>
     <style>
         * {
             box-sizing: border-box;
@@ -336,7 +336,7 @@
     <div id="login-screen" class="login-required" style="display: none;">
         <div style="max-width: 400px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
             <div style="width: 80px; height: 80px; background: linear-gradient(135deg, #5558AF, #7B7ED8); border-radius: 16px; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; font-size: 36px; color: white;">?</div>
-            <h2>IT Helpdesk Admin</h2>
+            <h2>Legal Help Admin</h2>
             <p>관리자 설정을 위해 Microsoft 계정으로 로그인하세요.</p>
             <a href="/admin/login" class="login-btn">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
@@ -348,7 +348,7 @@
     <!-- 메인 화면 -->
     <div id="main-screen" style="display: none;">
         <div class="header">
-            <h1>IT Helpdesk Admin</h1>
+            <h1>Legal Help Admin</h1>
             <div class="user-info">
                 <span class="user-email" id="user-email"></span>
                 <button class="logout-btn" onclick="logout()">로그아웃</button>
@@ -477,7 +477,7 @@
                 <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid #eee;">
                     <div class="form-group">
                         <label for="bot-name">봇 이름</label>
-                        <input type="text" id="bot-name" value="IT Helpdesk">
+                        <input type="text" id="bot-name" value="Legal Help">
                     </div>
                     <div class="form-group">
                         <label for="welcome-message">환영 메시지</label>
@@ -495,7 +495,7 @@
                 <h3>설정 완료 후 다음 단계</h3>
                 <ol>
                     <li>Teams Admin Center (<code>admin.teams.microsoft.com</code>)에서 앱을 조직에 배포하세요.</li>
-                    <li>사용자들이 Teams에서 "IT Helpdesk" 봇을 찾아 대화를 시작할 수 있습니다.</li>
+                    <li>사용자들이 Teams에서 "Legal Help" 봇을 찾아 대화를 시작할 수 있습니다.</li>
                     <li>사용자 메시지는 자동으로 선택한 헬프데스크 플랫폼으로 전달됩니다.</li>
                 </ol>
             </div>
@@ -510,10 +510,24 @@
         let selectedChannelId = '';
         let channels = [];
         let isConfigured = false;
+        let botAppId = '';
+
+        async function loadAppInfo() {
+            try {
+                const res = await fetch('/api/admin/app-info');
+                if (!res.ok) return;
+                const data = await res.json();
+                botAppId = (data.bot_app_id || '').trim();
+            } catch (e) {
+                // ignore
+            }
+        }
 
         // 페이지 로드 시 인증 확인
         async function init() {
             try {
+                await loadAppInfo();
+
                 const response = await fetch('/admin/me');
                 if (response.ok) {
                     const data = await response.json();
@@ -624,7 +638,11 @@
 
         // Graph API 권한 승인 (팝업)
         function grantGraphConsent() {
-            const clientId = 'be1747e3-28d1-41cd-b655-6cce4f188a8c';
+            const clientId = botAppId || '';
+            if (!clientId) {
+                showError('Bot App ID를 확인할 수 없습니다. 잠시 후 다시 시도하세요.');
+                return;
+            }
             const redirectUri = encodeURIComponent(window.location.origin + '/api/admin/graph/consent/callback');
             const consentUrl = `https://login.microsoftonline.com/${tenantId}/adminconsent?client_id=${clientId}&redirect_uri=${redirectUri}&scope=https://graph.microsoft.com/.default`;
 
@@ -782,7 +800,7 @@
 
         // 설정 저장
         async function saveConfig() {
-            const botName = document.getElementById('bot-name').value.trim() || 'IT Helpdesk';
+            const botName = document.getElementById('bot-name').value.trim() || 'Legal Help';
             const welcomeMessage = document.getElementById('welcome-message').value.trim();
 
             let requestBody = {

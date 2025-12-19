@@ -3,6 +3,7 @@
 테넌트별 플랫폼 클라이언트 생성 및 캐싱
 - Freshchat
 - Zendesk
+- Freshdesk
 """
 from typing import Optional, Protocol, Any
 import time

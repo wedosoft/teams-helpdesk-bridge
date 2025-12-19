@@ -65,6 +65,15 @@ async def health():
 from app.teams.routes import router as teams_router
 app.include_router(teams_router, prefix=f"{API_PREFIX}/bot", tags=["Teams Bot"])
 
+# Azure Bot Service 기본 엔드포인트 별칭
+# (Azure Portal에서 messaging endpoint를 /api/messages로 두는 경우가 많아 PoC 편의상 제공)
+from app.teams.routes import bot_messages as _bot_messages_handler
+
+
+@app.post(f"{API_PREFIX}/messages")
+async def bot_messages_alias(request: Request):
+    return await _bot_messages_handler(request)
+
 # Freshchat Webhook
 from app.adapters.freshchat.routes import router as freshchat_router
 app.include_router(freshchat_router, prefix=f"{API_PREFIX}/webhook/freshchat", tags=["Freshchat"])

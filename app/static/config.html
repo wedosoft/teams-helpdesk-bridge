@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IT Helpdesk 설정</title>
+    <title>Legal Help 설정</title>
     <script src="https://res.cdn.office.net/teams-js/2.19.0/js/MicrosoftTeams.min.js"></script>
     <style>
         * {
@@ -195,7 +195,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>IT Helpdesk 설정</h1>
+        <h1>Legal Help 설정</h1>
         <p class="subtitle">헬프데스크 플랫폼을 연결하세요</p>
 
         <div class="step-indicator">
@@ -279,7 +279,7 @@
             <h2 style="margin-bottom: 16px;">추가 설정 (선택)</h2>
             <div class="form-group">
                 <label for="bot-name">봇 이름</label>
-                <input type="text" id="bot-name" value="IT Helpdesk">
+                <input type="text" id="bot-name" value="Legal Help">
             </div>
             <div class="form-group">
                 <label for="welcome-message">환영 메시지</label>
@@ -457,7 +457,7 @@
 
         // 설정 저장
         async function saveConfiguration(saveEvent) {
-            const botName = document.getElementById('bot-name').value.trim() || 'IT Helpdesk';
+            const botName = document.getElementById('bot-name').value.trim() || 'Legal Help';
             const welcomeMessage = document.getElementById('welcome-message').value.trim();
 
             let requestBody = {
@@ -503,7 +503,7 @@
                     microsoftTeams.pages.config.setConfig({
                         entityId: tenantId,
                         contentUrl: window.location.origin + '/tab/content',
-                        suggestedDisplayName: 'IT Helpdesk',
+                        suggestedDisplayName: 'Legal Help',
                     });
                     saveEvent.notifySuccess();
                 } else {

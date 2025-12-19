@@ -1,7 +1,7 @@
 """메시지 라우터 (Orchestrator)
 
 멀티테넌트 지원 메시지 라우터
-- Teams → Helpdesk (Freshchat/Zendesk)
+- Teams → Helpdesk (Freshchat/Zendesk/Freshdesk)
 - Helpdesk → Teams
 
 주요 기능:

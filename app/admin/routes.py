@@ -312,6 +312,20 @@ async def get_webhook_info(
     )
 
 
+@router.get("/app-info")
+async def get_app_info() -> dict:
+    """프론트(정적 HTML)에서 사용할 기본 앱 정보
+
+    - Bot App ID는 민감정보가 아니므로 노출 가능
+    - Admin UI에서 Graph admin consent URL 생성 등에 사용
+    """
+    settings = get_settings()
+    return {
+        "bot_app_id": settings.bot_app_id,
+        "public_url": settings.public_url,
+    }
+
+
 @router.get("/validate")
 async def validate_connection(
     tenant_id: str = Depends(get_tenant_id_from_header),

@@ -4,7 +4,7 @@
 
 Microsoft Teams와 헬프데스크 플랫폼(Freshchat/Zendesk/Freshdesk) 간 양방향 메시지 브릿지 서비스.
 
-- **배포 URL**: https://teams-helpdesk-bridge.fly.dev
+- **배포 URL**: https://teams.wedosoft.net
 - **플랫폼**: Fly.io (512MB RAM)
 - **데이터베이스**: Supabase (PostgreSQL + Storage)
 
@@ -26,12 +26,17 @@ Freshdesk를 **SSOT(진행/상태/답변)**로 사용하고, Teams는 인테이�
 - Freshdesk 클라이언트: `app/adapters/freshdesk/client.py`
   - 인증: Basic Auth (`username=api_key`, `password='X'`)
   - 주요 기능: 티켓 생성/조회/목록, 문의(공개 메모) 추가, 연결 검증
+  - 제한(POC): **바이너리 첨부 업로드는 미지원**(Teams에서는 링크 첨부 권장)
 - 웹훅 라우터/핸들러: `app/adapters/freshdesk/routes.py`, `app/adapters/freshdesk/webhook.py`
 - 요청자(팀즈 탭)용 API:
   - `GET /api/freshdesk/requests` (내 티켓 목록)
   - `GET /api/freshdesk/requests/{ticket_id}` (티켓 상세)
   - `POST /api/freshdesk/requests/{ticket_id}/inquiry` (문의 추가 = 공개 메모)
   - 구현: `app/adapters/freshdesk/requester_routes.py`
+  - 주의: 위 API는 PoC 단계에서 **헤더 기반 식별**을 사용함
+    - `X-Tenant-ID`: Teams 테넌트 ID
+    - `X-Requester-Email`: 요청자 이메일
+    - 상세/문의 API는 최소한의 소유권 체크가 있어, 이메일이 티켓 requester와 다르면 403이 발생할 수 있음
 - 요청자 대시보드(Teams Tab HTML):
   - UI: `app/static/requests.html`
   - 라우팅: `app/main.py`에서 `/tab/requests` 제공
@@ -92,17 +97,19 @@ Teams SSO 없이도 테스트할 수 있도록 `X-Tenant-ID` 헤더를 지원.
 curl -X POST 'http://localhost:8000/api/admin/config' \
   -H 'Content-Type: application/json' \
   -H 'X-Tenant-ID: <YOUR_TEAMS_TENANT_ID>' \
-  -d '{
-    "platform": "freshdesk",
-    "freshdesk": {
-      "base_url": "https://<YOUR_DOMAIN>.freshdesk.com",
-      "api_key": "<FRESHDESK_API_KEY>",
-      "weight_field_key": "cf_weight"
-    },
-    "bot_name": "Legal Help",
-    "welcome_message": "접수되었습니다. 담당자가 확인 후 답변드립니다."
-  }'
+	  -d '{
+	    "platform": "freshdesk",
+	    "freshdesk": {
+	      "base_url": "https://<YOUR_DOMAIN>.freshdesk.com",
+	      "api_key": "<FRESHDESK_API_KEY>",
+	      "weight_field_key": "cf_weight"
+	    },
+	    "bot_name": "Legal Help",
+	    "welcome_message": "접수되었습니다. 담당자가 확인 후 답변드립니다."
+	  }'
 ```
+
+> 참고: Freshdesk POC 경로에서는 첫 인사 메시지를 `welcome_message` 대신 케이스 번호 포함 형태로 고정해서 보내고 있습니다. (`app/core/router.py`)
 
 2) 연결 검증:
 ```bash
@@ -242,7 +249,7 @@ MessageRouter (app/core/router.py)
     ↓
 PlatformFactory (app/core/platform_factory.py)
     ↓
-FreshchatClient / ZendeskClient (app/adapters/)
+FreshchatClient / ZendeskClient / FreshdeskClient (app/adapters/)
 ```
 
 ### 주요 캐싱
@@ -250,7 +257,7 @@ FreshchatClient / ZendeskClient (app/adapters/)
 | 항목 | TTL | 위치 |
 |------|-----|------|
 | Platform Client | 10분 | `PlatformFactory._cache` |
-| Agent 정보 | 30분 | `FreshchatClient._agent_cache` |
+| Agent 정보 | 30분 | `FreshchatClient._agent_cache`, `ZendeskClient._agent_cache`, `FreshdeskClient._agent_cache` |
 | Supabase Client | 영구 | `@lru_cache` |
 
 ---
@@ -263,6 +270,10 @@ FreshchatClient / ZendeskClient (app/adapters/)
 | `app/teams/bot.py` | Teams Bot Framework 핸들러 |
 | `app/adapters/freshchat/client.py` | Freshchat API 클라이언트 |
 | `app/adapters/freshchat/webhook.py` | Freshchat 웹훅 파서 |
+| `app/adapters/freshdesk/client.py` | Freshdesk API 클라이언트(POC: 티켓/노트) |
+| `app/adapters/freshdesk/routes.py` | Freshdesk 웹훅 라우터 |
+| `app/adapters/freshdesk/webhook.py` | Freshdesk 웹훅 파서 |
+| `app/adapters/freshdesk/requester_routes.py` | Freshdesk 요청자(Teams 탭) API |
 | `app/database.py` | Supabase DB/Storage 클라이언트 |
 | `app/core/platform_factory.py` | 플랫폼 클라이언트 팩토리 |
 | `app/core/tenant.py` | 멀티테넌트 설정 관리 |
@@ -286,12 +297,14 @@ fly logs -a teams-helpdesk-bridge
 1. **메모리**: 512MB - 대용량 파일 처리 시 주의
 2. **Freshchat 파일 업로드**: 이미지는 `image` 타입, 기타는 `file` 타입 사용 필요
 3. **Teams Adaptive Card**: 버전 1.4 사용 중
+4. **Freshdesk(POC) 첨부**: 바이너리 업로드는 미지원(링크 첨부 권장)
 
 ---
 
 ## 향후 개선 가능 항목
 
-- [ ] Zendesk 어댑터 완성 (현재 Freshchat만 테스트됨)
-- [ ] 대화 종료 시 Teams 알림
-- [ ] 에러 재시도 로직 강화
-- [ ] 모니터링/알림 시스템 추가
+- [ ] 요청자 대시보드 인증(Teams SSO) 적용 및 헤더 기반 식별 제거
+- [ ] Zendesk 웹훅 시크릿(서명 검증) 테넌트 설정 연동 (`app/adapters/zendesk/routes.py` TODO)
+- [ ] Freshdesk 바이너리 첨부 업로드 지원(또는 링크 기반 UX 고도화)
+- [ ] Freshdesk 첫 인사 메시지 정책 정리(케이스 번호 + 커스텀 welcome_message 조합 등)
+- [ ] 에러 재시도/백오프 및 모니터링/알림 강화
