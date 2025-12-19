@@ -1,8 +1,8 @@
-# Teams Helpdesk Bridge - 작업 현황 핸드오버
+# Teams Helpdesk Bridge - 인수인계 (Handover)
 
 ## 프로젝트 개요
 
-Microsoft Teams와 헬프데스크 플랫폼(Freshchat/Zendesk) 간 양방향 메시지 브릿지 서비스.
+Microsoft Teams와 헬프데스크 플랫폼(Freshchat/Zendesk/Freshdesk) 간 양방향 메시지 브릿지 서비스.
 
 - **배포 URL**: https://teams-helpdesk-bridge.fly.dev
 - **플랫폼**: Fly.io (512MB RAM)
@@ -10,7 +10,147 @@ Microsoft Teams와 헬프데스크 플랫폼(Freshchat/Zendesk) 간 양방향 �
 
 ---
 
-## 최근 완료된 작업 (2024-11-30)
+## 최근 완료된 작업 (2025-12-19) - POSCO “Legal Help” POC (Freshdesk)
+
+### 1) POC 아키텍처/런북 문서화
+
+- `docs/posco/posco-poc-architecture.md`: POC 아키텍처/흐름 정리
+- `docs/posco/posco-poc-runbook.md`: 로컬/배포 환경에서 재현 가능한 실행 가이드
+- `docs/posco/posco-poc-BS.md`: 요구사항/정책/의사결정(가중치 등) 의견 정리
+- 원문 이메일 컨텍스트: `docs/posco/content.txt`, `docs/posco/content.pdf`
+
+### 2) Freshdesk 연동(POC 기준) 구현
+
+Freshdesk를 **SSOT(진행/상태/답변)**로 사용하고, Teams는 인테이크(접수) + 대시보드(조회) + 문의(공개 메모) UX를 제공.
+
+- Freshdesk 클라이언트: `app/adapters/freshdesk/client.py`
+  - 인증: Basic Auth (`username=api_key`, `password='X'`)
+  - 주요 기능: 티켓 생성/조회/목록, 문의(공개 메모) 추가, 연결 검증
+- 웹훅 라우터/핸들러: `app/adapters/freshdesk/routes.py`, `app/adapters/freshdesk/webhook.py`
+- 요청자(팀즈 탭)용 API:
+  - `GET /api/freshdesk/requests` (내 티켓 목록)
+  - `GET /api/freshdesk/requests/{ticket_id}` (티켓 상세)
+  - `POST /api/freshdesk/requests/{ticket_id}/inquiry` (문의 추가 = 공개 메모)
+  - 구현: `app/adapters/freshdesk/requester_routes.py`
+- 요청자 대시보드(Teams Tab HTML):
+  - UI: `app/static/requests.html`
+  - 라우팅: `app/main.py`에서 `/tab/requests` 제공
+
+### 3) Teams 인테이크 카드(“검토요청”) 구현
+
+- 봇 채팅에서 `검토요청` 입력 → Adaptive Card 인테이크 폼 응답
+- 제출(invoke) → Freshdesk 티켓 생성 호출 → 케이스 번호 안내
+- 구현 파일:
+  - `app/teams/bot.py` (invoke 처리 포함)
+  - `app/core/router.py` (명령 처리/라우팅)
+
+> 정책: 가중치는 요청자가 입력하지 않고 **법무팀이 Freshdesk 커스텀필드로 부여**하는 방식(A안)으로 정리.
+
+### 4) 테넌트 설정/암호화/환경변수 정리
+
+- 테넌트별 플랫폼 자격증명은 **Supabase `tenants.platform_config`에 암호화 저장** (서버 환경변수에 Freshdesk API Key를 하드코딩하지 않음).
+  - 암복호화 유틸: `app/utils/crypto.py`
+- Supabase 프로젝트에서 legacy 키(anon/service_role)가 비활성화된 경우를 대비하여
+  - 서버는 `SUPABASE_SECRET_KEY` 사용: `app/config.py`, `app/database.py`
+- `ENCRYPTION_KEY`는 **필수** (누락/변경 시 기존에 저장된 암호화 설정을 복호화할 수 없음)
+  - 주의사항/키 생성법을 런북에 명시: `docs/posco/posco-poc-runbook.md`
+- `.env.example`에서 혼동되는 미사용 변수(Freshchat/Zendesk 관련 샘플) 정리: `.env.example`
+
+### 5) /api/admin/validate 디버깅 UX 개선
+
+- 복호화 실패/환경변수 누락 같은 RuntimeError를 5xx로만 내보내지 않고 JSON으로 반환하여 PoC 디버깅을 쉽게 함
+- 구현: `app/admin/routes.py`
+
+---
+
+## POC 운영/테스트 체크리스트 (Freshdesk 기준)
+
+### 필수 환경변수
+
+로컬/배포 공통(값은 절대 커밋 금지):
+- `PUBLIC_URL`
+- `BOT_APP_ID`, `BOT_APP_PASSWORD`, `BOT_TENANT_ID` (Azure AD App/Bot 설정)
+- `SUPABASE_URL`, `SUPABASE_SECRET_KEY`
+- `ENCRYPTION_KEY`
+- `LOG_LEVEL` (선택)
+
+### 로컬 실행
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+python3 -m pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+### 테넌트 설정(로컬 POC)
+
+Teams SSO 없이도 테스트할 수 있도록 `X-Tenant-ID` 헤더를 지원.
+
+1) 설정 저장:
+```bash
+curl -X POST 'http://localhost:8000/api/admin/config' \
+  -H 'Content-Type: application/json' \
+  -H 'X-Tenant-ID: <YOUR_TEAMS_TENANT_ID>' \
+  -d '{
+    "platform": "freshdesk",
+    "freshdesk": {
+      "base_url": "https://<YOUR_DOMAIN>.freshdesk.com",
+      "api_key": "<FRESHDESK_API_KEY>",
+      "weight_field_key": "cf_weight"
+    },
+    "bot_name": "Legal Help",
+    "welcome_message": "접수되었습니다. 담당자가 확인 후 답변드립니다."
+  }'
+```
+
+2) 연결 검증:
+```bash
+curl 'http://localhost:8000/api/admin/validate' -H 'X-Tenant-ID: <YOUR_TEAMS_TENANT_ID>'
+```
+
+### 요청자 대시보드(로컬)
+
+Teams 탭에서 SSO 붙이기 전 POC 단계에서는 다음 형태로도 확인 가능:
+- `/tab/requests?tenant=<TENANT_ID>&email=<REQUESTER_EMAIL>`
+
+### 자주 겪는 이슈/해결
+
+- `Failed to decrypt ...` / `Freshdesk config missing`
+  - 원인: `ENCRYPTION_KEY` 누락 또는 저장 당시 키와 불일치
+  - 해결: `ENCRYPTION_KEY`를 고정(환경별 동일)하고, 필요 시 `POST /api/admin/config`로 재저장(재암호화)
+- Supabase “Legacy API keys are disabled”
+  - 원인: legacy(anon/service_role) 키 비활성화
+  - 해결: `SUPABASE_SECRET_KEY`를 사용
+- Teams에서 실제로 호출이 안됨
+  - 원인: `PUBLIC_URL`이 로컬(`http://localhost`)이거나, Bot 등록 정보(Azure)와 매니페스트가 불일치
+  - 해결: Fly 등 외부 공개 URL로 배포 후 `PUBLIC_URL`/Teams manifest를 맞춤
+
+### 배포(Fly.io)
+
+```bash
+fly deploy
+fly logs -a teams-helpdesk-bridge
+```
+
+운영 시 Fly Secrets에 들어가야 하는 값(예시):
+- `PUBLIC_URL`
+- `BOT_APP_ID`, `BOT_APP_PASSWORD`, `BOT_TENANT_ID`
+- `SUPABASE_URL`, `SUPABASE_SECRET_KEY`
+- `ENCRYPTION_KEY`
+- `LOG_LEVEL`
+
+---
+
+## 알려진 제한사항 / TODO
+
+- 요청자 대시보드 인증은 PoC 단계에서 단순화되어 있음(Teams SSO 연동은 후속 작업)
+- Supabase CLI의 일부 기능(`supabase db dump` 등)은 Docker 데몬이 필요할 수 있음(로컬 개발 환경에 따라 차이)
+- 봇 토큰 발급 401이 보이면(`login.microsoftonline.com ... 401`) Bot App 비밀번호/테넌트 설정을 우선 점검
+
+---
+
+## 이전 작업 기록 (2024-11-30)
 
 ### 1. 첨부파일 통합 전송
 
