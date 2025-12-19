@@ -10,6 +10,7 @@
 - 첨부파일 양방향 전송
 """
 import asyncio
+import re
 from typing import Any, Optional
 
 from botbuilder.core import TurnContext
@@ -146,6 +147,90 @@ class MessageRouter:
             return
 
         try:
+            # Freshdesk(법무 POC): 기존 티켓을 현재 Teams 대화에 연결
+            # - Freshdesk에서 생성된 티켓(또는 기존 티켓)이라도 webhook 알림을 받으려면
+            #   ticket_id -> Teams conversation_reference 매핑이 필요하다.
+            if tenant.platform == Platform.FRESHDESK:
+                text = (message.text or "").strip()
+                m = re.match(r"^(?:/)?(?:link|구독|연결)\s*#?(\d+)\s*$", text, flags=re.IGNORECASE)
+                if m:
+                    ticket_id = m.group(1)
+
+                    view_ticket_fn = getattr(client, "view_ticket", None)
+                    if not callable(view_ticket_fn):
+                        await context.send_activity("이 테넌트의 Freshdesk 클라이언트가 티켓 조회를 지원하지 않습니다.")
+                        return
+
+                    ticket = await view_ticket_fn(ticket_id=ticket_id, include_requester=True)
+                    if not ticket:
+                        await context.send_activity(f"티켓 #{ticket_id}를 찾을 수 없습니다. 번호를 확인해 주세요.")
+                        return
+
+                    requester = ticket.get("requester") if isinstance(ticket.get("requester"), dict) else {}
+                    requester_email = (requester.get("email") or "").strip().lower()
+                    user_email = ((message.user.email if message.user else None) or "").strip().lower()
+
+                    # 가능한 경우 소유권 최소 검증(POC)
+                    if requester_email and user_email and requester_email != user_email:
+                        await context.send_activity(
+                            f"티켓 #{ticket_id}의 요청자 이메일({requester_email})이 현재 사용자({user_email})와 달라 연결할 수 없습니다."
+                        )
+                        return
+
+                    mapping = ConversationMapping(
+                        teams_conversation_id=teams_conversation_id,
+                        teams_user_id=(message.user.id if message.user else ""),
+                        conversation_reference=conversation_reference,
+                        platform=tenant.platform.value,
+                        platform_conversation_id=str(ticket.get("id") or ticket_id),
+                        platform_conversation_numeric_id=str(ticket.get("id") or ticket_id),
+                        platform_user_id=requester_email or user_email or None,
+                        is_resolved=False,
+                        greeting_sent=True,
+                        tenant_id=tenant.id,
+                    )
+                    await self.store.upsert(mapping)
+
+                    await context.send_activity(
+                        f"티켓 #{ticket_id}를 이 채팅에 연결했습니다. 이제 Freshdesk 공개 메모/업데이트가 이 대화로 전송됩니다."
+                    )
+                    return
+
+                # Freshdesk(법무 POC): 첫 메시지는 폼(Adaptive Card)로 접수하는 흐름을 기본으로 한다.
+                # - 사용자가 아무 텍스트를 보내도 바로 티켓을 만드는 대신, 폼을 보여준다.
+                # - 이미 매핑이 있으면(기존 티켓 연결 상태) 일반 메시지 전송 경로를 탄다.
+                if not (getattr(message, "metadata", None) and message.metadata.get("force_new_conversation")):
+                    existing = await self.store.get_by_teams_id(
+                        teams_conversation_id, tenant.platform.value
+                    )
+                    if not existing or existing.is_resolved:
+                        from app.teams.bot import build_legal_intake_card
+
+                        raw = (message.text or "").strip()
+                        subject_guess = ""
+                        desc_guess = ""
+                        if raw:
+                            first_line = raw.splitlines()[0].strip()
+                            subject_guess = first_line[:120]
+                            desc_guess = raw
+
+                        card = build_legal_intake_card(
+                            subject_value=subject_guess,
+                            description_value=desc_guess,
+                        )
+                        await context.send_activity(
+                            Activity(
+                                type=ActivityTypes.message,
+                                attachments=[
+                                    BotAttachment(
+                                        content_type="application/vnd.microsoft.card.adaptive",
+                                        content=card,
+                                    )
+                                ],
+                            )
+                        )
+                        return
+
             # 4. 기존 대화 매핑 확인
             force_new = bool(getattr(message, "metadata", None) and message.metadata.get("force_new_conversation"))
             mapping = None

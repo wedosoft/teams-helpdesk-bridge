@@ -70,6 +70,7 @@
   ],
   "validDomains": [
     "teams.wedosoft.net",
+    "login.microsoftonline.com",
     "*.botframework.com"
   ],
   "webApplicationInfo": {

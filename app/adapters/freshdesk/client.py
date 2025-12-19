@@ -217,6 +217,20 @@ class FreshdeskClient:
         subject = (metadata or {}).get("subject") or self._extract_subject(message_text)
         description = (metadata or {}).get("description") or (message_text or "")
 
+        # 일부 Freshdesk 계정/포털 설정에서는 status/priority가 필수인 경우가 있어 기본값을 제공한다.
+        # status: 2(Open), 3(Pending), 4(Resolved), 5(Closed), 6(Waiting on Customer), 7(Waiting on Third Party)
+        # priority: 1(Low), 2(Medium), 3(High), 4(Urgent)
+        status = (metadata or {}).get("status")
+        priority = (metadata or {}).get("priority")
+        try:
+            status_value = int(status) if status is not None else 2
+        except Exception:
+            status_value = 2
+        try:
+            priority_value = int(priority) if priority is not None else 2
+        except Exception:
+            priority_value = 2
+
         # CC 이메일
         cc_emails = (metadata or {}).get("cc_emails")
         if cc_emails is not None and not isinstance(cc_emails, list):
@@ -235,6 +249,8 @@ class FreshdeskClient:
             "subject": subject,
             "description": description,
             "email": user_id,
+            "status": status_value,
+            "priority": priority_value,
         }
 
         if cc_emails:

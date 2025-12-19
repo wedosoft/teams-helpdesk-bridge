@@ -1160,7 +1160,10 @@ def build_file_card(
     }
 
 
-def build_legal_intake_card() -> dict:
+def build_legal_intake_card(
+    subject_value: str = "",
+    description_value: str = "",
+) -> dict:
     """법무 검토요청 인테이크용 Adaptive Card (POC)"""
     return {
         "type": "AdaptiveCard",
@@ -1179,6 +1182,7 @@ def build_legal_intake_card() -> dict:
                 "label": "제목",
                 "placeholder": "예: 계약서 검토 요청",
                 "isRequired": True,
+                **({"value": subject_value} if subject_value else {}),
             },
             {
                 "type": "Input.Text",
@@ -1187,6 +1191,7 @@ def build_legal_intake_card() -> dict:
                 "placeholder": "검토 요청 내용을 입력하세요.",
                 "isMultiline": True,
                 "isRequired": True,
+                **({"value": description_value} if description_value else {}),
             },
             {
                 "type": "Input.Text",
