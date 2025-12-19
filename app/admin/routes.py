@@ -265,7 +265,10 @@ async def get_webhook_info(
     tenant = await service.get_tenant(tenant_id)
 
     if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not configured")
+        raise HTTPException(
+            status_code=404,
+            detail="Tenant not configured. Open /admin/setup (Teams tab) or POST /api/admin/config with X-Tenant-ID to create tenant settings.",
+        )
 
     settings = get_settings()
     base_url = settings.public_url or f"http://localhost:{settings.port}"
@@ -318,7 +321,11 @@ async def validate_connection(
     API 키가 유효한지 확인
     """
     service = get_tenant_service()
-    tenant = await service.get_tenant(tenant_id)
+    try:
+        tenant = await service.get_tenant(tenant_id)
+    except RuntimeError as e:
+        # Admin UI/PoC에서는 5xx 대신 결과 JSON으로 돌려주는 편이 디버깅이 쉽다.
+        return {"valid": False, "error": str(e)}
 
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not configured")
@@ -334,6 +341,18 @@ async def validate_connection(
         }
 
     # 실제 API 호출로 검증 (플랫폼별 validate_api_key 제공)
+    validate_detail_fn = getattr(client, "validate_api_key_detail", None)
+    if callable(validate_detail_fn):
+        detail = await validate_detail_fn()
+        if detail.get("valid"):
+            return {"valid": True, "platform": tenant.platform.value, "message": "Connection validated successfully"}
+        return {
+            "valid": False,
+            "platform": tenant.platform.value,
+            "status": detail.get("status"),
+            "error": detail.get("error") or "Invalid credentials or cannot reach API",
+        }
+
     validate_fn = getattr(client, "validate_api_key", None)
     if not callable(validate_fn):
         return {

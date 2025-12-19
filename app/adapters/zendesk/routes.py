@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Zendesk Webhook 라우트 (멀티테넌트)"""
 from fastapi import APIRouter, Request, Response, HTTPException, Path
 

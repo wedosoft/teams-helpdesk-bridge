@@ -15,7 +15,7 @@ logger = get_logger(__name__)
 def get_supabase_client() -> Client:
     """캐시된 Supabase 클라이언트 반환"""
     settings = get_settings()
-    return create_client(settings.supabase_url, settings.supabase_service_role_key)
+    return create_client(settings.supabase_url, settings.supabase_key)
 
 
 class Database:

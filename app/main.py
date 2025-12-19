@@ -77,6 +77,10 @@ app.include_router(zendesk_router, prefix=f"{API_PREFIX}/webhook/zendesk", tags=
 from app.adapters.freshdesk.routes import router as freshdesk_router
 app.include_router(freshdesk_router, prefix=f"{API_PREFIX}/webhook/freshdesk", tags=["Freshdesk"])
 
+# Freshdesk Requester API (Teams dashboard)
+from app.adapters.freshdesk.requester_routes import router as freshdesk_requester_router
+app.include_router(freshdesk_requester_router, prefix=f"{API_PREFIX}/freshdesk", tags=["Freshdesk Requester"])
+
 # Admin API (Teams Tab 설정용)
 from app.admin.routes import router as admin_router
 app.include_router(admin_router, prefix=f"{API_PREFIX}/admin", tags=["Admin"])
@@ -102,6 +106,11 @@ async def tab_config():
 async def tab_content():
     """Teams Tab 콘텐츠 페이지 (설정 완료 후 표시)"""
     return FileResponse(STATIC_DIR / "content.html")
+
+@app.get("/tab/requests")
+async def tab_requests():
+    """요청자 대시보드 (내 요청함)"""
+    return FileResponse(STATIC_DIR / "requests.html")
 
 
 @app.get("/admin/setup")

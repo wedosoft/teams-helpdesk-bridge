@@ -22,16 +22,12 @@ def _get_fernet() -> Fernet:
     """Fernet 인스턴스 반환
 
     ENCRYPTION_KEY 환경변수에서 키 로드
-    없으면 키 생성 (개발용)
     """
     settings = get_settings()
     key = settings.encryption_key
 
     if not key:
-        # 개발 환경: 경고 후 기본 키 사용 (프로덕션에서는 반드시 설정 필요)
-        logger.warning("ENCRYPTION_KEY not set, using insecure default key")
-        # 고정된 개발용 키 (프로덕션에서 사용 금지)
-        key = "dev-insecure-key-do-not-use-in-production"
+        raise RuntimeError("ENCRYPTION_KEY is required")
 
     # PBKDF2로 키 유도 (32바이트 키 → Fernet용 URL-safe base64)
     kdf = PBKDF2HMAC(
@@ -113,8 +109,7 @@ def decrypt_config(config: dict[str, Any]) -> dict[str, Any]:
                 decrypted_value = fernet.decrypt(encrypted_value.encode()).decode()
                 decrypted[key] = decrypted_value
             except Exception as e:
-                logger.error("Failed to decrypt field", field=key, error=str(e))
-                decrypted[key] = ""
+                raise RuntimeError(f"Failed to decrypt field: {key}") from e
         else:
             decrypted[key] = value
 

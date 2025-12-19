@@ -2,6 +2,7 @@
 from functools import lru_cache
 from typing import Optional
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,7 +30,12 @@ class Settings(BaseSettings):
 
     # Supabase
     supabase_url: str = ""
-    supabase_service_role_key: str = ""
+    # Supabase API Key
+    # - Some projects disable legacy keys (anon/service_role); use the new Secret key in that case.
+    supabase_key: str = Field(
+        default="",
+        validation_alias="SUPABASE_SECRET_KEY",
+    )
 
     # Freshchat
     freshchat_api_key: str = ""

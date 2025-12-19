@@ -14,7 +14,7 @@
 ### (B) Supabase
 
 - `supabase/migrations/001_initial_schema.sql` 실행
-- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` 준비
+- `SUPABASE_URL`, `SUPABASE_SECRET_KEY` 준비 (프로젝트에서 legacy 키가 비활성화된 경우 필수)
 
 ### (C) Freshdesk(Omni)
 
@@ -31,16 +31,35 @@
 필수:
 - `PUBLIC_URL` (Webhook/Teams에서 접근 가능한 URL)
 - `BOT_APP_ID`, `BOT_APP_PASSWORD`
-- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_URL`, `SUPABASE_SECRET_KEY`
 - `ENCRYPTION_KEY` (운영 기준 필수)
+
+로컬 개발도 Supabase(클라우드)를 사용합니다.
+- 로컬에 별도 DB를 띄우지 않고, `.env.local`에 Supabase 접속 정보를 넣어 사용합니다.
+
+### ENCRYPTION_KEY 주의사항
+
+- `.env.local`에서 **값 뒤에 인라인 코멘트(예: `ENCRYPTION_KEY=xxx # comment`)를 붙이지 마세요.** 파서에 따라 코멘트가 값으로 들어가 복호화가 실패할 수 있습니다.
+- `ENCRYPTION_KEY`는 **테넌트 설정 저장 시점에 암호화에 사용**되며, 이후 복호화에도 동일 키가 필요합니다.
+  - 이미 다른 키로 저장해 둔 테넌트가 있다면 `POST /api/admin/config`를 다시 호출해서 **재저장(재암호화)** 해야 합니다.
+
+키 생성 예시(둘 중 하나):
+
+```bash
+python3 -c 'import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
+```
+
+```bash
+openssl rand -base64 32 | tr -d '\n'
+```
 
 ---
 
 ## 3) 서버 실행
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv venv
+source venv/bin/activate
 python3 -m pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
@@ -106,6 +125,25 @@ curl -X POST 'http://localhost:8000/api/webhook/freshdesk/<YOUR_TEAMS_TENANT_ID>
 
 전제 조건:
 - `ticket_id=123`이 **Teams에서 생성된 케이스**여야 매핑이 존재하여 Proactive 알림이 전송됩니다.
+
+---
+
+## 6.5) 요청자 대시보드(Teams 탭) 빠른 확인
+
+요청자(현업)가 Teams에서 “내 요청함”을 확인하고, 진행 중 티켓에 **문의(공개 메모)**를 추가할 수 있는 최소 UI가 포함되어 있습니다.
+
+- 탭 URL: `/tab/requests`
+- 사용 API:
+  - `GET /api/freshdesk/requests` (내 티켓 목록)
+  - `GET /api/freshdesk/requests/{ticket_id}` (티켓 상세)
+  - `POST /api/freshdesk/requests/{ticket_id}/inquiry` (문의 추가 = 공개 메모)
+
+POC 단계에서는 Teams SSO 대신 아래 헤더로 요청자를 식별합니다.
+- `X-Tenant-ID`: Teams tenant id
+- `X-Requester-Email`: 요청자 이메일
+
+로컬 브라우저에서 Teams 없이 확인하려면 URL 쿼리를 사용합니다.
+- `/tab/requests?tenant=<TENANT_ID>&email=<REQUESTER_EMAIL>`
 
 ---
 

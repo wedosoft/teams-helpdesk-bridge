@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """테넌트 서비스
 
 멀티테넌트 지원을 위한 테넌트 설정 관리
@@ -14,6 +16,7 @@ import time
 from app.database import Database
 from app.utils.logger import get_logger
 from app.utils.crypto import decrypt_config, encrypt_config
+from app.config import get_settings
 
 logger = get_logger(__name__)
 
@@ -106,8 +109,18 @@ class TenantService:
     """
 
     def __init__(self):
-        self._db = Database()
+        self._db: Optional[Database] = None
         self._cache: dict[str, CachedTenant] = {}
+
+    @property
+    def db(self) -> Database:
+        """Database (Supabase) 클라이언트
+
+        로컬/POC에서 Supabase를 설정하지 않은 경우에도 서버가 기동될 수 있도록 lazy 로드합니다.
+        """
+        if self._db is None:
+            self._db = Database()
+        return self._db
 
     async def get_tenant(self, teams_tenant_id: str) -> Optional[TenantConfig]:
         """
@@ -127,7 +140,11 @@ class TenantService:
 
         # 2. DB 조회
         try:
-            data = await self._db.get_tenant_by_teams_id(teams_tenant_id)
+            settings = get_settings()
+            if not settings.supabase_url or not settings.supabase_key:
+                raise RuntimeError("Supabase is not configured (SUPABASE_URL/SUPABASE_SECRET_KEY)")
+
+            data = await self.db.get_tenant_by_teams_id(teams_tenant_id)
             if not data:
                 logger.debug("Tenant not found", teams_tenant_id=teams_tenant_id)
                 return None
@@ -144,8 +161,19 @@ class TenantService:
             logger.info("Loaded tenant config", teams_tenant_id=teams_tenant_id, platform=config.platform)
             return config
 
+        except RuntimeError:
+            # 설정 누락 등은 호출자에서 5xx로 처리하도록 전파
+            raise
         except Exception as e:
-            logger.error("Failed to get tenant", teams_tenant_id=teams_tenant_id, error=str(e))
+            msg = str(e)
+            if "Legacy API keys are disabled" in msg or "401 Unauthorized" in msg:
+                raise RuntimeError(
+                    "Supabase credentials rejected (401). If your project disabled legacy keys, "
+                    "set SUPABASE_SECRET_KEY to the new secret API key in the Supabase dashboard "
+                    "(or re-enable legacy keys)."
+                )
+
+            logger.error("Failed to get tenant", teams_tenant_id=teams_tenant_id, error=msg)
             return None
 
     async def create_tenant(
@@ -170,6 +198,10 @@ class TenantService:
             생성된 TenantConfig 또는 None
         """
         try:
+            settings = get_settings()
+            if not settings.supabase_url or not settings.supabase_key:
+                raise RuntimeError("Supabase is not configured (SUPABASE_URL/SUPABASE_SECRET_KEY)")
+
             # 설정 암호화
             encrypted_config = encrypt_config(platform_config)
 
@@ -181,7 +213,7 @@ class TenantService:
                 "welcome_message": welcome_message,
             }
 
-            result = await self._db.upsert_tenant(data)
+            result = await self.db.upsert_tenant(data)
             if not result:
                 return None
 
@@ -217,8 +249,12 @@ class TenantService:
             업데이트된 TenantConfig 또는 None
         """
         try:
+            settings = get_settings()
+            if not settings.supabase_url or not settings.supabase_key:
+                raise RuntimeError("Supabase is not configured (SUPABASE_URL/SUPABASE_SECRET_KEY)")
+
             # 기존 설정 조회
-            existing = await self._db.get_tenant_by_teams_id(teams_tenant_id)
+            existing = await self.db.get_tenant_by_teams_id(teams_tenant_id)
             if not existing:
                 logger.warning("Tenant not found for update", teams_tenant_id=teams_tenant_id)
                 return None
@@ -242,7 +278,7 @@ class TenantService:
                 return await self.get_tenant(teams_tenant_id)
 
             # DB 업데이트
-            await self._db.update_tenant(teams_tenant_id, update_data)
+            await self.db.update_tenant(teams_tenant_id, update_data)
 
             # 캐시 무효화
             self._invalidate_cache(teams_tenant_id)
@@ -264,7 +300,11 @@ class TenantService:
             성공 여부
         """
         try:
-            await self._db.delete_tenant(teams_tenant_id)
+            settings = get_settings()
+            if not settings.supabase_url or not settings.supabase_key:
+                raise RuntimeError("Supabase is not configured (SUPABASE_URL/SUPABASE_SECRET_KEY)")
+
+            await self.db.delete_tenant(teams_tenant_id)
             self._invalidate_cache(teams_tenant_id)
             logger.info("Deleted tenant", teams_tenant_id=teams_tenant_id)
             return True
@@ -278,7 +318,13 @@ class TenantService:
 
         # 플랫폼 설정 복호화
         encrypted_config = data.get("platform_config", {})
-        platform_config = decrypt_config(encrypted_config)
+        try:
+            platform_config = decrypt_config(encrypted_config)
+        except RuntimeError as e:
+            raise RuntimeError(
+                "Failed to decrypt tenant platform_config. Check ENCRYPTION_KEY is set and matches the key "
+                "used when the tenant was saved. If the key changed, re-save the tenant config to re-encrypt."
+            ) from e
 
         config = TenantConfig(
             id=data["id"],

@@ -95,8 +95,34 @@ class FreshdeskClient:
         result = await self._request("GET", url, params={"per_page": 1})
         return result is not None
 
+    async def validate_api_key_detail(self) -> dict:
+        """API Key 유효성 검증 (상세)
+
+        Returns:
+            { "valid": bool, "status": int|None, "error": str|None }
+        """
+        url = f"{self.api_url}/tickets"
+        headers = self._get_auth_header()
+        headers["Content-Type"] = "application/json"
+
+        try:
+            async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
+                resp = await client.get(url, headers=headers, params={"per_page": 1})
+
+                if resp.status_code >= 400:
+                    return {
+                        "valid": False,
+                        "status": resp.status_code,
+                        "error": resp.text[:500],
+                    }
+
+                # 성공 응답은 보통 list 이지만, 일단 2xx면 통과로 처리
+                return {"valid": True, "status": resp.status_code, "error": None}
+        except Exception as e:
+            return {"valid": False, "status": None, "error": str(e)}
+
     async def list_tickets(self, per_page: int = 100) -> list[dict]:
-        """티켓 목록 조회 (POC용 단순 집계)"""
+        """티켓 목록 조회 (POC용 단순 집계/관리자용)"""
         url = f"{self.api_url}/tickets"
         result = await self._request("GET", url, params={"per_page": per_page})
 
@@ -106,6 +132,57 @@ class FreshdeskClient:
             return [t for t in result["tickets"] if isinstance(t, dict)]
 
         return []
+
+    async def list_tickets_for_requester(
+        self,
+        requester_email: str,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> list[dict]:
+        """요청자 이메일 기준 티켓 목록 조회
+
+        Freshdesk API: GET /api/v2/tickets?email={requester_email}
+        """
+        url = f"{self.api_url}/tickets"
+        params = {"email": requester_email, "page": page, "per_page": per_page}
+        result = await self._request("GET", url, params=params)
+
+        if isinstance(result, list):
+            return [t for t in result if isinstance(t, dict)]
+        if isinstance(result, dict) and isinstance(result.get("tickets"), list):
+            return [t for t in result["tickets"] if isinstance(t, dict)]
+        return []
+
+    async def view_ticket(
+        self,
+        ticket_id: str,
+        include_requester: bool = True,
+    ) -> Optional[dict]:
+        """티켓 상세 조회"""
+        url = f"{self.api_url}/tickets/{ticket_id}"
+        params = {"include": "requester"} if include_requester else None
+        result = await self._request("GET", url, params=params)
+        return result if isinstance(result, dict) else None
+
+    async def add_public_inquiry_note(
+        self,
+        ticket_id: str,
+        body: str,
+    ) -> bool:
+        """요청자 문의를 '공개 메모'로 추가
+
+        Freshdesk API: POST /api/v2/tickets/{id}/notes
+        - private=false: 공개
+        - incoming=true: 외부(요청자)에서 들어온 것처럼 표시 (운영상 자연스러움)
+        """
+        url = f"{self.api_url}/tickets/{ticket_id}/notes"
+        payload = {
+            "body": body,
+            "private": False,
+            "incoming": True,
+        }
+        result = await self._request("POST", url, json=payload)
+        return result is not None
 
     # ===== HelpdeskClient 인터페이스 =====
 
