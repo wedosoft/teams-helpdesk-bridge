@@ -215,6 +215,25 @@ class TeamsBot:
             if activity.from_property.id == activity.recipient.id:
                 return
 
+        # Teams 클라이언트/버전에 따라 Adaptive Card Submit이 invoke가 아니라 message로 들어오는 경우가 있음.
+        # - 이 경우 activity.text는 null이고 activity.value에 submit payload가 담긴다.
+        # - submit을 message로 처리하면 라우터가 "첫 메시지 → 카드 재표시"로 오인해 카드가 반복될 수 있다.
+        if isinstance(getattr(activity, "value", None), dict):
+            try:
+                # _handle_invoke는 activity.type을 강제하지 않으므로 재사용 가능
+                submit = activity.value
+                if isinstance(submit.get("data"), dict):
+                    submit = submit["data"]
+                elif isinstance(submit.get("action"), dict) and isinstance(submit["action"].get("data"), dict):
+                    submit = submit["action"]["data"]
+
+                if isinstance(submit, dict) and submit.get("action") == "create_legal_case":
+                    await self._handle_invoke(context)
+                    return
+            except Exception:
+                # fall through to normal message handling
+                pass
+
         # 디버깅: activity 상세 정보 로깅
         logger.info(
             "Activity details",

@@ -1,14 +1,14 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
   "manifestVersion": "1.16",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "id": "77a6e06c-9d85-428b-ad30-035b9c698eb4",
   "packageName": "com.poscointl.legalhelp",
   "developer": {
-    "name": "POSCO International",
-    "websiteUrl": "https://www.poscointl.com",
-    "privacyUrl": "https://www.poscointl.com",
-    "termsOfUseUrl": "https://www.poscointl.com"
+    "name": "We Do Soft Inc.",
+    "websiteUrl": "https://wedosoft.net",
+    "privacyUrl": "https://www.wedosoft.net/privacy-policy",
+    "termsOfUseUrl": "https://wedosoft.net"
   },
   "name": {
     "short": "Legal Help",
