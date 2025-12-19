@@ -391,6 +391,7 @@
                 <div class="platform-tabs">
                     <div class="platform-tab active" data-platform="freshchat">Freshchat</div>
                     <div class="platform-tab" data-platform="zendesk">Zendesk</div>
+                    <div class="platform-tab" data-platform="freshdesk">Freshdesk</div>
                 </div>
 
                 <!-- Freshchat 설정 -->
@@ -406,7 +407,7 @@
                         <p>Freshchat Admin > Settings > Webhooks에서 아래 URL을 등록하세요:</p>
                         <div class="url-copy">
                             <input type="text" id="freshchat-webhook-url" readonly style="font-family: monospace; font-size: 12px;">
-                            <button type="button" class="btn btn-secondary btn-small" onclick="copyWebhookUrl()">복사</button>
+                            <button type="button" class="btn btn-secondary btn-small" onclick="copyWebhookUrl('freshchat')">복사</button>
                         </div>
                     </div>
 
@@ -442,6 +443,33 @@
                         <label for="zendesk-api-token">API Token *</label>
                         <input type="password" id="zendesk-api-token" placeholder="Zendesk API Token">
                         <p class="help-text">Zendesk Admin > Apps and integrations > APIs > Zendesk API</p>
+                    </div>
+                </div>
+
+                <!-- Freshdesk 설정 -->
+                <div class="platform-config" id="freshdesk-config">
+                    <div class="form-group">
+                        <label for="freshdesk-base-url">Base URL *</label>
+                        <input type="text" id="freshdesk-base-url" placeholder="예: https://yourdomain.freshdesk.com">
+                        <p class="help-text">Freshdesk(Omni) 포털 도메인을 입력하세요.</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="freshdesk-api-key">API Key *</label>
+                        <input type="password" id="freshdesk-api-key" placeholder="Freshdesk API Key">
+                        <p class="help-text">Freshdesk Profile/Settings에서 API Key를 확인하세요.</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="freshdesk-weight-field-key">가중치 필드 키 (선택)</label>
+                        <input type="text" id="freshdesk-weight-field-key" placeholder="예: cf_weight">
+                        <p class="help-text">가중치(1~5)를 저장할 커스텀 필드 키입니다.</p>
+                    </div>
+                    <div class="info-box">
+                        <label style="margin-bottom: 8px;">Webhook URL</label>
+                        <p>Freshdesk Automation(Webhook)에서 아래 URL을 호출하도록 설정하세요:</p>
+                        <div class="url-copy">
+                            <input type="text" id="freshdesk-webhook-url" readonly style="font-family: monospace; font-size: 12px;">
+                            <button type="button" class="btn btn-secondary btn-small" onclick="copyWebhookUrl('freshdesk')">복사</button>
+                        </div>
                     </div>
                 </div>
 
@@ -524,13 +552,21 @@
         // Webhook URL 업데이트
         function updateWebhookUrl() {
             const baseUrl = window.location.origin;
-            const webhookUrl = `${baseUrl}/api/webhook/freshchat/${tenantId}`;
-            document.getElementById('freshchat-webhook-url').value = webhookUrl;
+            const platforms = ['freshchat', 'zendesk', 'freshdesk'];
+            platforms.forEach((platform) => {
+                const input = document.getElementById(`${platform}-webhook-url`);
+                if (!input) return;
+                input.value = `${baseUrl}/api/webhook/${platform}/${tenantId}`;
+            });
         }
 
         // Webhook URL 복사
-        function copyWebhookUrl() {
-            const input = document.getElementById('freshchat-webhook-url');
+        function copyWebhookUrl(platform) {
+            const input = document.getElementById(`${platform}-webhook-url`);
+            if (!input) {
+                showError('Webhook URL을 찾을 수 없습니다.');
+                return;
+            }
             input.select();
             document.execCommand('copy');
             showSuccess('Webhook URL이 복사되었습니다!');
@@ -620,7 +656,12 @@
 
                 if (data.is_configured) {
                     isConfigured = true;
-                    const platformName = data.platform === 'freshchat' ? 'Freshchat' : 'Zendesk';
+                    const platformNameMap = {
+                        freshchat: 'Freshchat',
+                        zendesk: 'Zendesk',
+                        freshdesk: 'Freshdesk',
+                    };
+                    const platformName = platformNameMap[data.platform] || data.platform || 'Unknown';
                     statusContainer.innerHTML = `
                         <div style="display: flex; align-items: center; justify-content: space-between;">
                             <div>
@@ -658,9 +699,7 @@
             });
 
             // Webhook URL 업데이트
-            const baseUrl = window.location.origin;
-            const webhookUrl = `${baseUrl}/api/webhook/${platform}/${tenantId}`;
-            document.getElementById('freshchat-webhook-url').value = webhookUrl;
+            updateWebhookUrl();
         }
 
         // 에러 표시
@@ -767,7 +806,7 @@
                     inbox_id: selectedChannelId,
                     webhook_public_key: webhookPublicKey || '',
                 };
-            } else {
+            } else if (currentPlatform === 'zendesk') {
                 const subdomain = document.getElementById('zendesk-subdomain').value.trim();
                 const email = document.getElementById('zendesk-email').value.trim();
                 const apiToken = document.getElementById('zendesk-api-token').value.trim();
@@ -782,6 +821,24 @@
                     email: email,
                     api_token: apiToken,
                 };
+            } else if (currentPlatform === 'freshdesk') {
+                const baseUrl = document.getElementById('freshdesk-base-url').value.trim();
+                const apiKey = document.getElementById('freshdesk-api-key').value.trim();
+                const weightFieldKey = document.getElementById('freshdesk-weight-field-key').value.trim();
+
+                if (!baseUrl || !apiKey) {
+                    showError('Freshdesk Base URL과 API Key를 입력하세요.');
+                    return;
+                }
+
+                requestBody.freshdesk = {
+                    base_url: baseUrl,
+                    api_key: apiKey,
+                    weight_field_key: weightFieldKey || '',
+                };
+            } else {
+                showError('지원하지 않는 플랫폼입니다: ' + currentPlatform);
+                return;
             }
 
             const btn = document.getElementById('btn-save');

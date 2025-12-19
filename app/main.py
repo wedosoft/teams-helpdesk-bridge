@@ -73,6 +73,10 @@ app.include_router(freshchat_router, prefix=f"{API_PREFIX}/webhook/freshchat", t
 from app.adapters.zendesk.routes import router as zendesk_router
 app.include_router(zendesk_router, prefix=f"{API_PREFIX}/webhook/zendesk", tags=["Zendesk"])
 
+# Freshdesk Webhook
+from app.adapters.freshdesk.routes import router as freshdesk_router
+app.include_router(freshdesk_router, prefix=f"{API_PREFIX}/webhook/freshdesk", tags=["Freshdesk"])
+
 # Admin API (Teams Tab 설정용)
 from app.admin.routes import router as admin_router
 app.include_router(admin_router, prefix=f"{API_PREFIX}/admin", tags=["Admin"])

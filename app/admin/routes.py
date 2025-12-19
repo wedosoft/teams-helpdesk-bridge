@@ -2,7 +2,7 @@
 
 Teams Tab에서 호출하는 테넌트 설정 API
 - 테넌트 설정 조회/저장
-- 플랫폼 연동 설정 (Freshchat/Zendesk)
+- 플랫폼 연동 설정 (Freshchat/Zendesk/Freshdesk)
 - 웹훅 URL 생성
 - Graph API 관리자 동의
 """
@@ -44,11 +44,19 @@ class ZendeskSetup(BaseModel):
     api_token: str = Field(..., description="API 토큰")
 
 
+class FreshdeskSetup(BaseModel):
+    """Freshdesk 설정 (Freshdesk Omni 포함)"""
+    base_url: str = Field(..., description="Freshdesk Base URL (예: https://yourdomain.freshdesk.com)")
+    api_key: str = Field(..., description="Freshdesk API Key")
+    weight_field_key: str = Field(default="", description="가중치 커스텀 필드 키 (예: cf_weight)")
+
+
 class TenantSetupRequest(BaseModel):
     """테넌트 설정 요청"""
-    platform: str = Field(..., description="플랫폼 (freshchat/zendesk)")
+    platform: str = Field(..., description="플랫폼 (freshchat/zendesk/freshdesk)")
     freshchat: Optional[FreshchatSetup] = None
     zendesk: Optional[ZendeskSetup] = None
+    freshdesk: Optional[FreshdeskSetup] = None
     bot_name: str = Field(default="IT Helpdesk", description="봇 이름")
     welcome_message: str = Field(
         default="안녕하세요! IT 헬프데스크입니다. 무엇을 도와드릴까요?",
@@ -152,7 +160,7 @@ async def save_tenant_config(
     except ValueError:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid platform: {request.platform}. Use 'freshchat' or 'zendesk'.",
+            detail=f"Invalid platform: {request.platform}. Use 'freshchat', 'zendesk', or 'freshdesk'.",
         )
 
     # 플랫폼별 설정 검증
@@ -181,6 +189,17 @@ async def save_tenant_config(
             "subdomain": request.zendesk.subdomain,
             "email": request.zendesk.email,
             "api_token": request.zendesk.api_token,
+        }
+    elif platform == Platform.FRESHDESK:
+        if not request.freshdesk:
+            raise HTTPException(status_code=400, detail="Freshdesk configuration required")
+        if not request.freshdesk.base_url or not request.freshdesk.api_key:
+            raise HTTPException(status_code=400, detail="Freshdesk base_url and API key required")
+
+        platform_config = {
+            "base_url": request.freshdesk.base_url,
+            "api_key": request.freshdesk.api_key,
+            "weight_field_key": request.freshdesk.weight_field_key,
         }
 
     # 테넌트 생성/업데이트
@@ -271,6 +290,15 @@ async def get_webhook_info(
             "5. Request format: JSON\n"
             "6. Trigger: 티켓 업데이트 시"
         )
+    elif tenant.platform == Platform.FRESHDESK:
+        instructions = (
+            "Freshdesk 웹훅 설정(POC 권장):\n"
+            "1. Freshdesk Admin > Workflows/Automation에서 티켓 업데이트 트리거 선택\n"
+            "2. Action: Trigger Webhook (POST)\n"
+            f"3. Webhook URL: {webhook_url}\n"
+            "4. Payload에 최소한 ticket_id, text(또는 body), status를 포함하도록 설정\n"
+            "5. Save"
+        )
     else:
         instructions = "Unknown platform"
 
@@ -305,14 +333,133 @@ async def validate_connection(
             "error": "Failed to create client",
         }
 
-    # TODO: 실제 API 호출로 검증
-    # 예: Freshchat의 경우 /agents 조회, Zendesk의 경우 /users/me 조회
+    # 실제 API 호출로 검증 (플랫폼별 validate_api_key 제공)
+    validate_fn = getattr(client, "validate_api_key", None)
+    if not callable(validate_fn):
+        return {
+            "valid": False,
+            "platform": tenant.platform.value,
+            "error": "Validation is not implemented for this platform client",
+        }
+
+    try:
+        valid = await validate_fn()
+    except Exception as e:
+        return {
+            "valid": False,
+            "platform": tenant.platform.value,
+            "error": f"Validation request failed: {e}",
+        }
+
+    if not valid:
+        return {
+            "valid": False,
+            "platform": tenant.platform.value,
+            "error": "Invalid credentials or cannot reach API",
+        }
 
     return {
         "valid": True,
         "platform": tenant.platform.value,
         "message": "Connection validated successfully",
     }
+
+
+@router.get("/freshdesk/dashboard")
+async def freshdesk_dashboard(
+    tenant_id: str = Depends(get_tenant_id_from_header),
+    per_page: int = 100,
+) -> dict:
+    """Freshdesk 티켓 간단 집계(POC용)
+
+    - 실원별 진행/완료 건수
+    - 가중치 합(옵션: weight_field_key 설정 시)
+    """
+    service = get_tenant_service()
+    tenant = await service.get_tenant(tenant_id)
+
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not configured")
+
+    if tenant.platform != Platform.FRESHDESK:
+        raise HTTPException(status_code=400, detail="Tenant is not using Freshdesk")
+
+    from app.core.platform_factory import get_platform_factory
+
+    factory = get_platform_factory()
+    client = factory.get_client(tenant)
+
+    if not client:
+        raise HTTPException(status_code=500, detail="Failed to create Freshdesk client")
+
+    list_tickets_fn = getattr(client, "list_tickets", None)
+    if not callable(list_tickets_fn):
+        raise HTTPException(status_code=500, detail="Freshdesk client does not support list_tickets")
+
+    tickets = await list_tickets_fn(per_page=per_page)
+
+    weight_field_key = tenant.freshdesk.weight_field_key if tenant.freshdesk else ""
+
+    def is_done(status_value) -> bool:
+        if isinstance(status_value, int):
+            return status_value in {4, 5}
+        if isinstance(status_value, str):
+            return status_value.lower() in {"resolved", "closed"}
+        return False
+
+    summary = {
+        "total": {"all": 0, "open": 0, "done": 0},
+        "by_responder": {},
+        "weight_field_key": weight_field_key,
+    }
+
+    for t in tickets:
+        summary["total"]["all"] += 1
+
+        status_value = t.get("status")
+        done = is_done(status_value)
+        if done:
+            summary["total"]["done"] += 1
+        else:
+            summary["total"]["open"] += 1
+
+        responder_id = t.get("responder_id") or "unassigned"
+        bucket = summary["by_responder"].setdefault(
+            str(responder_id),
+            {"responder_id": responder_id, "open": 0, "done": 0, "weight_open": 0, "weight_done": 0},
+        )
+
+        if done:
+            bucket["done"] += 1
+        else:
+            bucket["open"] += 1
+
+        if weight_field_key:
+            cf = t.get("custom_fields") if isinstance(t.get("custom_fields"), dict) else {}
+            raw_weight = cf.get(weight_field_key)
+            try:
+                weight = int(raw_weight) if raw_weight is not None and str(raw_weight).strip() else 0
+            except Exception:
+                weight = 0
+            if done:
+                bucket["weight_done"] += weight
+            else:
+                bucket["weight_open"] += weight
+
+    # responder 이름 보강
+    get_agent_name_fn = getattr(client, "get_agent_name", None)
+    if callable(get_agent_name_fn):
+        for key, bucket in summary["by_responder"].items():
+            if key == "unassigned":
+                bucket["responder_name"] = "Unassigned"
+                continue
+            try:
+                bucket["responder_name"] = await get_agent_name_fn(str(bucket["responder_id"]))
+            except Exception:
+                bucket["responder_name"] = None
+
+    summary["by_responder"] = list(summary["by_responder"].values())
+    return summary
 
 
 # ===== Freshchat 채널 목록 =====

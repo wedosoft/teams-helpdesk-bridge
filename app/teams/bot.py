@@ -71,6 +71,7 @@ class TeamsMessage:
     user: Optional[TeamsUser] = None
     conversation_id: str = ""
     conversation_reference: Optional[dict] = None
+    metadata: Optional[dict] = None
 
 
 class TeamsBot:
@@ -119,9 +120,9 @@ class TeamsBot:
         except Exception:
             pass  # 에러 메시지 전송 실패는 무시
 
-    async def process_activity(self, activity: Activity, auth_header: str) -> None:
+    async def process_activity(self, activity: Activity, auth_header: str) -> Any:
         """Teams에서 받은 Activity 처리"""
-        await self.adapter.process_activity(
+        return await self.adapter.process_activity(
             activity,
             auth_header,
             self._handle_turn,
@@ -137,8 +138,73 @@ class TeamsBot:
             await self._handle_conversation_update(context)
         elif activity.type == ActivityTypes.installation_update:
             await self._handle_installation_update(context)
+        elif activity.type == ActivityTypes.invoke:
+            await self._handle_invoke(context)
         else:
             logger.debug("Unhandled activity type", activity_type=activity.type)
+
+    async def _handle_invoke(self, context: TurnContext) -> None:
+        """Invoke 핸들러 (Adaptive Card Submit 등)"""
+        activity = context.activity
+
+        # Adaptive Card Action.Submit 데이터 추출 (Teams 포맷 다양성 대응)
+        submit_data: Optional[dict] = None
+        if isinstance(activity.value, dict):
+            if isinstance(activity.value.get("data"), dict):
+                submit_data = activity.value.get("data")
+            elif isinstance(activity.value.get("action"), dict) and isinstance(activity.value["action"].get("data"), dict):
+                submit_data = activity.value["action"].get("data")
+            else:
+                submit_data = activity.value
+
+        if not submit_data:
+            logger.debug("Invoke without submit data", name=getattr(activity, "name", None))
+            return
+
+        action = submit_data.get("action")
+        if action != "create_legal_case":
+            logger.debug("Unhandled invoke action", action=action)
+            return
+
+        user = await self._collect_user_info(context)
+        conversation_reference = TurnContext.get_conversation_reference(activity)
+        conversation_reference_dict = self._serialize_conversation_reference(conversation_reference)
+
+        # 입력값 파싱
+        subject = (submit_data.get("subject") or submit_data.get("title") or "").strip()
+        description = (submit_data.get("description") or submit_data.get("body") or "").strip()
+        cc_raw = (submit_data.get("cc_emails") or submit_data.get("cc") or "").strip()
+        attachment_link = (submit_data.get("attachment_link") or submit_data.get("attachment_url") or "").strip()
+
+        cc_emails: list[str] = []
+        if cc_raw:
+            parts = [p.strip() for p in cc_raw.replace(";", ",").split(",")]
+            cc_emails = [p for p in parts if p and "@" in p]
+
+        # 설명에 첨부 링크 포함 (POC: 파일 업로드 대신 링크)
+        final_description = description
+        if attachment_link:
+            if final_description:
+                final_description += "\n\n"
+            final_description += f"첨부 링크: {attachment_link}"
+
+        message = TeamsMessage(
+            id=activity.id or "",
+            text=final_description,
+            attachments=[],
+            user=user,
+            conversation_id=activity.conversation.id if activity.conversation else "",
+            conversation_reference=conversation_reference_dict,
+            metadata={
+                "subject": subject or "법무 검토 요청",
+                "description": final_description,
+                "cc_emails": cc_emails,
+                "force_new_conversation": True,
+            },
+        )
+
+        if self._message_handler:
+            await self._message_handler(context=context, message=message)
 
     async def _handle_message(self, context: TurnContext) -> None:
         """메시지 핸들러"""
@@ -1089,6 +1155,57 @@ def build_file_card(
                         ],
                     },
                 ],
+            }
+        ],
+    }
+
+
+def build_legal_intake_card() -> dict:
+    """법무 검토요청 인테이크용 Adaptive Card (POC)"""
+    return {
+        "type": "AdaptiveCard",
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "version": "1.4",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": "법무 검토 요청",
+                "weight": "Bolder",
+                "size": "Medium",
+            },
+            {
+                "type": "Input.Text",
+                "id": "subject",
+                "label": "제목",
+                "placeholder": "예: 계약서 검토 요청",
+                "isRequired": True,
+            },
+            {
+                "type": "Input.Text",
+                "id": "description",
+                "label": "내용",
+                "placeholder": "검토 요청 내용을 입력하세요.",
+                "isMultiline": True,
+                "isRequired": True,
+            },
+            {
+                "type": "Input.Text",
+                "id": "cc_emails",
+                "label": "열람자 이메일 (선택)",
+                "placeholder": "예: a@company.com, b@company.com",
+            },
+            {
+                "type": "Input.Text",
+                "id": "attachment_link",
+                "label": "첨부 링크 (선택)",
+                "placeholder": "SharePoint/OneDrive 링크",
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "접수하기",
+                "data": {"action": "create_legal_case"},
             }
         ],
     }

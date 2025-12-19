@@ -9,9 +9,11 @@ import time
 
 from app.adapters.freshchat.client import FreshchatClient
 from app.adapters.freshchat.webhook import FreshchatWebhookHandler
+from app.adapters.freshdesk.client import FreshdeskClient
+from app.adapters.freshdesk.webhook import FreshdeskWebhookHandler
 from app.adapters.zendesk.client import ZendeskClient
 from app.adapters.zendesk.webhook import ZendeskWebhookHandler
-from app.core.tenant import TenantConfig, Platform, FreshchatConfig, ZendeskConfig
+from app.core.tenant import TenantConfig, Platform, FreshchatConfig, ZendeskConfig, FreshdeskConfig
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -40,6 +42,7 @@ class HelpdeskClient(Protocol):
         user_name: str,
         message_text: Optional[str] = None,
         attachments: Optional[list[dict]] = None,
+        metadata: Optional[dict] = None,
     ) -> Optional[dict]:
         """대화 생성"""
         ...
@@ -50,6 +53,7 @@ class HelpdeskClient(Protocol):
         user_id: str,
         message_text: Optional[str] = None,
         attachments: Optional[list[dict]] = None,
+        metadata: Optional[dict] = None,
     ) -> bool:
         """메시지 전송"""
         ...
@@ -145,6 +149,8 @@ class PlatformFactory:
             return self._create_freshchat_client(tenant.freshchat)
         elif tenant.platform == Platform.ZENDESK:
             return self._create_zendesk_client(tenant.zendesk)
+        elif tenant.platform == Platform.FRESHDESK:
+            return self._create_freshdesk_client(tenant.freshdesk)
 
         logger.error("Unknown platform", platform=tenant.platform)
         return None
@@ -174,6 +180,18 @@ class PlatformFactory:
             oauth_token=config.oauth_token,
         )
 
+    def _create_freshdesk_client(self, config: Optional[FreshdeskConfig]) -> Optional[FreshdeskClient]:
+        """Freshdesk 클라이언트 생성"""
+        if not config or not config.base_url or not config.api_key:
+            logger.error("Freshdesk config missing")
+            return None
+
+        return FreshdeskClient(
+            base_url=config.base_url,
+            api_key=config.api_key,
+            weight_field_key=config.weight_field_key,
+        )
+
     def _create_webhook_handler(self, tenant: TenantConfig) -> Optional[Any]:
         """웹훅 핸들러 생성"""
         if tenant.platform == Platform.FRESHCHAT:
@@ -191,6 +209,8 @@ class PlatformFactory:
         elif tenant.platform == Platform.ZENDESK:
             # Zendesk 웹훅은 HMAC-SHA256 시크릿 사용 (선택)
             return ZendeskWebhookHandler()
+        elif tenant.platform == Platform.FRESHDESK:
+            return FreshdeskWebhookHandler()
 
         return None
 

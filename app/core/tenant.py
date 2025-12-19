@@ -26,6 +26,7 @@ class Platform(str, Enum):
     """지원 플랫폼"""
     FRESHCHAT = "freshchat"
     ZENDESK = "zendesk"
+    FRESHDESK = "freshdesk"
 
 
 @dataclass
@@ -48,6 +49,19 @@ class ZendeskConfig:
 
 
 @dataclass
+class FreshdeskConfig:
+    """Freshdesk 설정 (Freshdesk Omni 포함)
+
+    Notes:
+      - base_url 예: https://{domain}.freshdesk.com
+      - weight_field_key 예: cf_weight
+    """
+    base_url: str
+    api_key: str
+    weight_field_key: str = ""
+
+
+@dataclass
 class TenantConfig:
     """테넌트 설정"""
     id: str
@@ -57,6 +71,7 @@ class TenantConfig:
     # 플랫폼별 설정
     freshchat: Optional[FreshchatConfig] = None
     zendesk: Optional[ZendeskConfig] = None
+    freshdesk: Optional[FreshdeskConfig] = None
 
     # UI 설정
     bot_name: str = "IT Helpdesk"
@@ -66,12 +81,14 @@ class TenantConfig:
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
-    def get_platform_config(self) -> FreshchatConfig | ZendeskConfig | None:
+    def get_platform_config(self) -> FreshchatConfig | ZendeskConfig | FreshdeskConfig | None:
         """현재 플랫폼 설정 반환"""
         if self.platform == Platform.FRESHCHAT:
             return self.freshchat
         elif self.platform == Platform.ZENDESK:
             return self.zendesk
+        elif self.platform == Platform.FRESHDESK:
+            return self.freshdesk
         return None
 
 
@@ -287,6 +304,12 @@ class TenantService:
                 email=platform_config.get("email", ""),
                 api_token=platform_config.get("api_token", ""),
                 oauth_token=platform_config.get("oauth_token"),
+            )
+        elif platform == Platform.FRESHDESK:
+            config.freshdesk = FreshdeskConfig(
+                base_url=platform_config.get("base_url", ""),
+                api_key=platform_config.get("api_key", ""),
+                weight_field_key=platform_config.get("weight_field_key", ""),
             )
 
         return config

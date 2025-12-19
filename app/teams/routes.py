@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Request, Response
 
 from botbuilder.schema import Activity
+from fastapi.responses import JSONResponse
 
 from app.teams.bot import get_teams_bot, TeamsMessage
 from app.core.router import get_message_router
@@ -36,7 +37,15 @@ async def bot_callback(request: Request) -> Response:
         bot.set_message_handler(message_handler)
 
         # Activity 처리
-        await bot.process_activity(activity, auth_header)
+        invoke_response = await bot.process_activity(activity, auth_header)
+
+        # Invoke Activity는 응답 바디가 필요할 수 있음
+        if invoke_response is not None and hasattr(invoke_response, "status"):
+            status = getattr(invoke_response, "status", 200)
+            body = getattr(invoke_response, "body", None)
+            if body is None:
+                return Response(status_code=status)
+            return JSONResponse(status_code=status, content=body)
 
         return Response(status_code=200)
 

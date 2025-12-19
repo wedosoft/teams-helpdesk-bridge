@@ -111,6 +111,12 @@ class ZendeskClient:
             logger.error("Zendesk API request failed", error=str(e))
             return None
 
+    async def validate_api_key(self) -> bool:
+        """인증 정보 유효성 검증 (간단 조회)"""
+        url = f"{self.base_url}/users/me.json"
+        result = await self._request("GET", url)
+        return bool(result and result.get("user"))
+
     # ===== 사용자 관리 =====
 
     async def get_or_create_user(
@@ -178,6 +184,7 @@ class ZendeskClient:
         user_name: str,
         message_text: Optional[str] = None,
         attachments: Optional[list[dict]] = None,
+        metadata: Optional[dict] = None,
     ) -> Optional[dict]:
         """
         새 대화(티켓) 생성
@@ -232,6 +239,7 @@ class ZendeskClient:
         user_id: str,
         message_text: Optional[str] = None,
         attachments: Optional[list[dict]] = None,
+        metadata: Optional[dict] = None,
     ) -> bool:
         """
         기존 대화(티켓)에 메시지 추가

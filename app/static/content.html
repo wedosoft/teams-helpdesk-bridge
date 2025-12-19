@@ -150,8 +150,13 @@
                 const data = await response.json();
 
                 if (data.is_configured) {
+                    const platformNameMap = {
+                        freshchat: 'Freshchat',
+                        zendesk: 'Zendesk',
+                        freshdesk: 'Freshdesk',
+                    };
                     document.getElementById('platform').textContent =
-                        data.platform === 'freshchat' ? 'Freshchat' : 'Zendesk';
+                        platformNameMap[data.platform] || data.platform || '-';
                     document.getElementById('bot-name').textContent = data.bot_name;
                     document.getElementById('status').textContent = '연결됨';
                     document.getElementById('status').className = 'status connected';

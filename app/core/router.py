@@ -13,7 +13,7 @@ import asyncio
 from typing import Any, Optional
 
 from botbuilder.core import TurnContext
-from botbuilder.schema import Attachment as BotAttachment
+from botbuilder.schema import Activity, ActivityTypes, Attachment as BotAttachment
 
 from app.adapters.freshchat.webhook import ParsedMessage, ParsedAttachment, WebhookEvent
 from app.core.tenant import TenantConfig, Platform, get_tenant_service
@@ -114,6 +114,26 @@ class MessageRouter:
             await self._send_setup_required_message(context)
             return
 
+        # Freshdesk(법무 POC): 인테이크 카드 요청 커맨드 처리
+        if tenant.platform == Platform.FRESHDESK:
+            text = (message.text or "").strip()
+            if text in {"검토요청", "검토 요청", "legal", "/legal", "new", "/new"}:
+                from app.teams.bot import build_legal_intake_card
+
+                card = build_legal_intake_card()
+                await context.send_activity(
+                    Activity(
+                        type=ActivityTypes.message,
+                        attachments=[
+                            BotAttachment(
+                                content_type="application/vnd.microsoft.card.adaptive",
+                                content=card,
+                            )
+                        ],
+                    )
+                )
+                return
+
         # 3. 플랫폼 클라이언트 가져오기
         factory = get_platform_factory()
         client = factory.get_client(tenant)
@@ -127,19 +147,39 @@ class MessageRouter:
 
         try:
             # 4. 기존 대화 매핑 확인
-            mapping = await self.store.get_by_teams_id(
-                teams_conversation_id, tenant.platform.value
-            )
+            force_new = bool(getattr(message, "metadata", None) and message.metadata.get("force_new_conversation"))
+            mapping = None
+            if not force_new:
+                mapping = await self.store.get_by_teams_id(
+                    teams_conversation_id, tenant.platform.value
+                )
+            else:
+                # 기존 매핑이 있으면 "활성 케이스"를 새 케이스로 전환 (DB 내에서만 종료 처리)
+                existing = await self.store.get_by_teams_id(
+                    teams_conversation_id, tenant.platform.value
+                )
+                if existing and not existing.is_resolved and existing.platform_conversation_id:
+                    await self.store.mark_resolved(
+                        existing.platform_conversation_id,
+                        tenant.platform.value,
+                        True,
+                    )
 
             # 5. 매핑이 없거나 종료된 경우 → 새 대화 생성
             if not mapping or mapping.is_resolved:
-                mapping = await self._create_new_conversation(
-                    context=context,
-                    message=message,
-                    tenant=tenant,
-                    client=client,
-                    conversation_reference=conversation_reference,
-                )
+                try:
+                    mapping = await self._create_new_conversation(
+                        context=context,
+                        message=message,
+                        tenant=tenant,
+                        client=client,
+                        conversation_reference=conversation_reference,
+                    )
+                except ValueError as e:
+                    # 플랫폼 설정 누락 등 사용자 조치가 필요한 케이스
+                    logger.warning("Conversation creation rejected", error=str(e))
+                    await context.send_activity(f"설정 오류로 접수할 수 없습니다: {e}")
+                    return
                 if not mapping:
                     await context.send_activity(
                         "죄송합니다. 상담 연결에 실패했습니다. 잠시 후 다시 시도해 주세요."
@@ -148,7 +188,11 @@ class MessageRouter:
 
                 # Greeting 메시지 (새 대화 시에만)
                 if not mapping.greeting_sent:
-                    welcome_msg = tenant.welcome_message or "안녕하세요! 상담원이 곧 연결됩니다. 🙂"
+                    if tenant.platform == Platform.FRESHDESK:
+                        case_id = mapping.platform_conversation_id or mapping.platform_conversation_numeric_id or ""
+                        welcome_msg = f"접수되었습니다. (케이스 번호: {case_id})"
+                    else:
+                        welcome_msg = tenant.welcome_message or "안녕하세요! 상담원이 곧 연결됩니다."
                     await context.send_activity(welcome_msg)
                     mapping.greeting_sent = True
                     await self.store.upsert(mapping)
@@ -272,6 +316,7 @@ class MessageRouter:
             user_name=user.name or "Unknown",
             message_text=message_text,
             attachments=attachments if attachments else None,
+            metadata=getattr(message, "metadata", None),
         )
 
         if not result:
@@ -329,6 +374,7 @@ class MessageRouter:
             user_id=user_id,
             message_text=message.text,
             attachments=attachments if attachments else None,
+            metadata=getattr(message, "metadata", None),
         )
 
     # ===== Helpdesk → Teams =====

@@ -291,6 +291,7 @@ class FreshchatClient:
         message_text: Optional[str] = None,
         attachments: Optional[list[dict]] = None,
         user_profile: Optional[dict] = None,
+        metadata: Optional[dict] = None,
     ) -> Optional[dict[str, Any]]:
         """
         새 대화 생성
@@ -367,6 +368,7 @@ class FreshchatClient:
         attachments: Optional[list[dict]] = None,
         auto_recover: bool = True,
         user_name: Optional[str] = None,
+        metadata: Optional[dict] = None,
     ) -> dict[str, Any]:
         """
         메시지 전송
