@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
@@ -33,6 +33,11 @@ app = FastAPI(
 
 # API prefix
 API_PREFIX = "/api"
+
+# Root: 사람이 브라우저에서 열었을 때 404 혼선 방지
+@app.get("/")
+async def root() -> RedirectResponse:
+    return RedirectResponse(url="/admin/setup", status_code=302)
 
 
 # ===== Health Check =====

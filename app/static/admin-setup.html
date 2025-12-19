@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Legal Help - Admin Setup</title>
+    <script src="https://res.cdn.office.net/teams-js/2.19.0/js/MicrosoftTeams.min.js"></script>
     <style>
         * {
             box-sizing: border-box;
@@ -338,10 +339,10 @@
             <div style="width: 80px; height: 80px; background: linear-gradient(135deg, #5558AF, #7B7ED8); border-radius: 16px; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; font-size: 36px; color: white;">?</div>
             <h2>Legal Help Admin</h2>
             <p>관리자 설정을 위해 Microsoft 계정으로 로그인하세요.</p>
-            <a href="/admin/login" class="login-btn">
+            <button type="button" class="login-btn" onclick="login()" style="border: 0;">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
                 Microsoft로 로그인
-            </a>
+            </button>
         </div>
     </div>
 
@@ -557,6 +558,42 @@
         function showLoginScreen() {
             document.getElementById('login-screen').style.display = 'block';
             document.getElementById('main-screen').style.display = 'none';
+        }
+
+        async function login() {
+            const authUrl = `${window.location.origin}/admin/login?redirect=${encodeURIComponent('/admin/auth-complete')}`;
+
+            try {
+                // Teams Tab(iframe)에서는 Entra 로그인 페이지가 iframe에서 막히므로 popup 인증을 사용해야 함.
+                if (window.microsoftTeams?.authentication?.authenticate) {
+                    try {
+                        if (window.microsoftTeams?.app?.initialize) {
+                            await window.microsoftTeams.app.initialize();
+                        }
+                    } catch (e) {
+                        // ignore
+                    }
+
+                    window.microsoftTeams.authentication.authenticate({
+                        url: authUrl,
+                        width: 600,
+                        height: 700,
+                        successCallback: () => {
+                            // 로그인 성공 → 다시 세션 확인
+                            init();
+                        },
+                        failureCallback: (reason) => {
+                            showError(`로그인 실패: ${reason || 'unknown error'}`);
+                        },
+                    });
+                    return;
+                }
+            } catch (e) {
+                // fallthrough to full redirect
+            }
+
+            // 브라우저 직접 접근(iframe 아님) 등 fallback
+            window.location.href = authUrl;
         }
 
         function logout() {

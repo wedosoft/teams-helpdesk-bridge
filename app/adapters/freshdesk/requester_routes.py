@@ -57,7 +57,10 @@ async def list_my_requests(
     teams_tenant_id, requester_email = ctx
 
     tenant_service = get_tenant_service()
-    tenant = await tenant_service.get_tenant(teams_tenant_id)
+    try:
+        tenant = await tenant_service.get_tenant(teams_tenant_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not configured")
     if tenant.platform != Platform.FRESHDESK:
@@ -101,7 +104,10 @@ async def get_request_detail(
     teams_tenant_id, requester_email = ctx
 
     tenant_service = get_tenant_service()
-    tenant = await tenant_service.get_tenant(teams_tenant_id)
+    try:
+        tenant = await tenant_service.get_tenant(teams_tenant_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not configured")
     if tenant.platform != Platform.FRESHDESK:
@@ -148,7 +154,10 @@ async def add_inquiry(
     teams_tenant_id, requester_email = ctx
 
     tenant_service = get_tenant_service()
-    tenant = await tenant_service.get_tenant(teams_tenant_id)
+    try:
+        tenant = await tenant_service.get_tenant(teams_tenant_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not configured")
     if tenant.platform != Platform.FRESHDESK:
@@ -183,4 +192,3 @@ async def add_inquiry(
         raise HTTPException(status_code=500, detail="Failed to add inquiry")
 
     return {"ok": True, "ticket_id": ticket_id}
-

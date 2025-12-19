@@ -55,6 +55,19 @@ def get_oauth_config():
     }
 
 
+def _sanitize_redirect_url(redirect_url: Optional[str]) -> str:
+    """Open redirect 방지: 상대경로만 허용"""
+    if not redirect_url:
+        return "/admin/setup"
+    value = redirect_url.strip()
+    if not value.startswith("/"):
+        return "/admin/setup"
+    # protocol-relative(//example.com) 방지
+    if value.startswith("//"):
+        return "/admin/setup"
+    return value
+
+
 def _is_https(request: Request) -> bool:
     """
     프록시 환경(ngrok, 로드밸런서)에서도 HTTPS 여부 판단
@@ -115,7 +128,7 @@ def get_session_from_cookie(request: Request) -> Optional[dict]:
 # ===== OAuth 라우트 =====
 
 @router.get("/login")
-async def admin_login(request: Request):
+async def admin_login(request: Request, redirect: Optional[str] = None):
     """Microsoft OAuth 로그인 시작
 
     Azure AD 로그인 페이지로 리다이렉트
@@ -130,9 +143,10 @@ async def admin_login(request: Request):
 
     # CSRF 방지용 state 생성
     state = secrets.token_urlsafe(32)
+    redirect_url = _sanitize_redirect_url(redirect)
     oauth_states[state] = {
         "created_at": datetime.utcnow(),
-        "redirect_url": "/admin/setup",  # 로그인 후 리다이렉트할 URL
+        "redirect_url": redirect_url,  # 로그인 후 리다이렉트할 URL
     }
 
     # Azure AD 로그인 URL 생성
@@ -273,6 +287,43 @@ async def oauth_callback(
     )
 
     return response
+
+
+@router.get("/auth-complete")
+async def auth_complete() -> HTMLResponse:
+    """Teams Tab popup 인증 완료 페이지
+
+    microsoftTeams.authentication.authenticate() 성공 콜백으로 복귀시킴.
+    (브라우저에서 직접 열면 /admin/setup으로 이동)
+    """
+    return HTMLResponse(
+        content="""
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Auth Complete</title>
+    <script src="https://res.cdn.office.net/teams-js/2.19.0/js/MicrosoftTeams.min.js"></script>
+  </head>
+  <body>
+    <script>
+      (function () {
+        try {
+          if (window.microsoftTeams && window.microsoftTeams.authentication && window.microsoftTeams.authentication.notifySuccess) {
+            window.microsoftTeams.authentication.notifySuccess("ok");
+            window.close();
+            return;
+          }
+        } catch (e) {}
+        window.location.href = "/admin/setup";
+      })();
+    </script>
+  </body>
+</html>
+""",
+        status_code=200,
+    )
 
 
 @router.get("/logout")
