@@ -33,6 +33,7 @@ from app.teams.bot import (
     TeamsAttachment,
     get_teams_bot,
     build_file_card,
+    build_legal_prompt_menu_card,
 )
 from app.utils.logger import get_logger
 
@@ -145,6 +146,26 @@ class MessageRouter:
                     conversation_reference=conversation_reference,
                 )
                 if handled:
+                    return
+
+                # 채팅은 대화 채널로 사용하지 않음 (진행/업데이트는 "내 요청함"에서)
+                force_new = bool(
+                    getattr(message, "metadata", None)
+                    and message.metadata.get("force_new_conversation")
+                )
+                if not force_new:
+                    menu_card = build_legal_prompt_menu_card()
+                    await context.send_activity(
+                        Activity(
+                            type=ActivityTypes.message,
+                            attachments=[
+                                BotAttachment(
+                                    content_type="application/vnd.microsoft.card.adaptive",
+                                    content=menu_card,
+                                )
+                            ],
+                        )
+                    )
                     return
 
             # 4. 기존 대화 매핑 확인
@@ -421,6 +442,13 @@ class MessageRouter:
 
             # 메시지 이벤트
             if event.action == "message_create" and event.message:
+                # Freshdesk(법무 POC): 진행/업데이트는 "내 요청함"에서만 노출
+                if tenant.platform == Platform.FRESHDESK:
+                    logger.info(
+                        "Freshdesk message suppressed (request tab only)",
+                        conversation_id=conversation_id,
+                    )
+                    return
                 await self._send_to_teams(event, mapping, tenant)
 
         except Exception as e:
@@ -471,6 +499,9 @@ class MessageRouter:
                 tenant.platform.value,
                 True,
             )
+
+        if tenant.platform == Platform.FRESHDESK:
+            return
 
         if mapping.conversation_reference:
             await self.bot.send_proactive_message(
@@ -863,16 +894,14 @@ class MessageRouter:
 
         text = (message.text or "").strip()
         if text in {"검토요청", "검토 요청", "legal", "/legal", "new", "/new"}:
-            from app.teams.bot import build_legal_intake_card
-
-            card = build_legal_intake_card()
+            menu_card = build_legal_prompt_menu_card()
             await context.send_activity(
                 Activity(
                     type=ActivityTypes.message,
                     attachments=[
                         BotAttachment(
                             content_type="application/vnd.microsoft.card.adaptive",
-                            content=card,
+                            content=menu_card,
                         )
                     ],
                 )

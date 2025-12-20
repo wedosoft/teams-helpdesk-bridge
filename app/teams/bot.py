@@ -162,6 +162,73 @@ class TeamsBot:
             return
 
         action = submit_data.get("action")
+        if action == "open_legal_intake":
+            card = build_legal_intake_card()
+            await context.send_activity(
+                Activity(
+                    type=ActivityTypes.message,
+                    attachments=[
+                        Attachment(
+                            content_type="application/vnd.microsoft.card.adaptive",
+                            content=card,
+                        )
+                    ],
+                )
+            )
+            return
+        if action == "create_legal_case_quick":
+            request_type = (submit_data.get("request_type") or "기타").strip()
+            subject = (submit_data.get("subject") or request_type or "법무 검토 요청").strip()
+
+            description_lines = [
+                "[간편 접수]",
+                f"- 유형: {request_type or '미입력'}",
+                "- 상세 내용은 '내 요청함'에서 추가 요청 예정",
+            ]
+            final_description = "\n".join(description_lines)
+
+            user = await self._collect_user_info(context)
+            conversation_reference = TurnContext.get_conversation_reference(activity)
+            conversation_reference_dict = self._serialize_conversation_reference(conversation_reference)
+
+            message = TeamsMessage(
+                id=activity.id or "",
+                text=final_description,
+                attachments=[],
+                user=user,
+                conversation_id=activity.conversation.id if activity.conversation else "",
+                conversation_reference=conversation_reference_dict,
+                metadata={
+                    "subject": subject,
+                    "description": final_description,
+                    "requester_email": user.email,
+                    "requester_name": user.name,
+                    "request_type": request_type,
+                    "force_new_conversation": True,
+                },
+            )
+
+            await self._update_intake_card_with_summary(
+                context=context,
+                submit_data={
+                    "subject": subject,
+                    "request_type": request_type,
+                },
+            )
+
+            if self._message_handler:
+                await self._message_handler(context=context, message=message)
+            return
+        if action == "show_request_tab_help":
+            await context.send_activity(
+                "진행상황 확인과 추가 문의는 '내 요청함' 탭에서 진행해 주세요."
+            )
+            return
+        if action == "show_link_help":
+            await context.send_activity(
+                "기존 케이스를 채팅에 연결하려면 `/link 12345` 형식으로 입력해 주세요."
+            )
+            return
         if action != "create_legal_case":
             logger.debug("Unhandled invoke action", action=action)
             return
@@ -172,7 +239,18 @@ class TeamsBot:
 
         # 입력값 파싱
         subject = (submit_data.get("subject") or submit_data.get("title") or "").strip()
-        description = (submit_data.get("description") or submit_data.get("body") or "").strip()
+        request_type = (submit_data.get("request_type") or "").strip()
+        counterparty = (submit_data.get("counterparty") or "").strip()
+        amount = (submit_data.get("amount") or "").strip()
+        due_date = (submit_data.get("due_date") or "").strip()
+        priority = (submit_data.get("priority") or "").strip()
+        confidentiality = (submit_data.get("confidentiality") or "").strip()
+        background = (submit_data.get("background") or "").strip()
+        request_detail = (submit_data.get("request_detail") or "").strip()
+        description = (
+            request_detail
+            or (submit_data.get("description") or submit_data.get("body") or "").strip()
+        )
         cc_raw = (submit_data.get("cc_emails") or submit_data.get("cc") or "").strip()
         attachment_link = (submit_data.get("attachment_link") or submit_data.get("attachment_url") or "").strip()
 
@@ -181,12 +259,36 @@ class TeamsBot:
             parts = [p.strip() for p in cc_raw.replace(";", ",").split(",")]
             cc_emails = [p for p in parts if p and "@" in p]
 
-        # 설명에 첨부 링크 포함 (POC: 파일 업로드 대신 링크)
-        final_description = description
+        # 설명 구성 (요청 요약 + 요청 내용)
+        summary_lines = [
+            f"- 유형: {request_type or '미입력'}",
+            f"- 거래처/상대방: {counterparty or '미입력'}",
+        ]
+        if amount:
+            summary_lines.append(f"- 계약 금액: {amount}")
+        if due_date:
+            summary_lines.append(f"- 희망 완료일: {due_date}")
+        if priority:
+            summary_lines.append(f"- 긴급도: {priority}")
+        if confidentiality:
+            summary_lines.append(f"- 기밀 등급: {confidentiality}")
+
+        parts = ["[요청 요약]"]
+        parts.extend(summary_lines)
+        parts.append("")
+        parts.append("[요청 내용]")
+        parts.append(description or "(내용 없음)")
+
+        if background:
+            parts.append("")
+            parts.append("[배경/상황]")
+            parts.append(background)
+
         if attachment_link:
-            if final_description:
-                final_description += "\n\n"
-            final_description += f"첨부 링크: {attachment_link}"
+            parts.append("")
+            parts.append(f"첨부 링크: {attachment_link}")
+
+        final_description = "\n".join(parts).strip()
 
         message = TeamsMessage(
             id=activity.id or "",
@@ -196,13 +298,24 @@ class TeamsBot:
             conversation_id=activity.conversation.id if activity.conversation else "",
             conversation_reference=conversation_reference_dict,
             metadata={
-                "subject": subject or "법무 검토 요청",
+                "subject": subject or (request_type or "법무 검토 요청"),
                 "description": final_description,
                 "cc_emails": cc_emails,
                 "requester_email": user.email,
                 "requester_name": user.name,
+                "request_type": request_type,
+                "counterparty": counterparty,
+                "amount": amount,
+                "due_date": due_date,
+                "priority": priority,
+                "confidentiality": confidentiality,
                 "force_new_conversation": True,
             },
+        )
+
+        await self._update_intake_card_with_summary(
+            context=context,
+            submit_data=submit_data,
         )
 
         if self._message_handler:
@@ -281,6 +394,48 @@ class TeamsBot:
                 context=context,
                 message=message,
             )
+
+    async def _update_intake_card_with_summary(
+        self,
+        context: TurnContext,
+        submit_data: dict,
+    ) -> None:
+        """제출된 인테이크 카드 메시지를 요약 카드로 교체"""
+        activity = context.activity
+        target_id = activity.reply_to_id or activity.id
+        if not target_id:
+            return
+
+        subject = (submit_data.get("subject") or submit_data.get("title") or "법무 검토 요청").strip()
+        request_type = (submit_data.get("request_type") or "").strip()
+        counterparty = (submit_data.get("counterparty") or "").strip()
+        due_date = (submit_data.get("due_date") or "").strip()
+        priority = (submit_data.get("priority") or "").strip()
+
+        summary_card = build_legal_intake_summary_card(
+            subject=subject,
+            request_type=request_type,
+            counterparty=counterparty,
+            due_date=due_date,
+            priority=priority,
+        )
+
+        try:
+            await context.update_activity(
+                Activity(
+                    type=ActivityTypes.message,
+                    id=target_id,
+                    conversation=activity.conversation,
+                    attachments=[
+                        Attachment(
+                            content_type="application/vnd.microsoft.card.adaptive",
+                            content=summary_card,
+                        )
+                    ],
+                )
+            )
+        except Exception as e:
+            logger.warning("Failed to update intake card", error=str(e))
 
     async def _collect_user_info(self, context: TurnContext) -> TeamsUser:
         """사용자 정보 수집 (Activity + TeamsInfo + Graph API)"""
@@ -1185,7 +1340,7 @@ def build_legal_intake_card(
     subject_value: str = "",
     description_value: str = "",
 ) -> dict:
-    """법무 검토요청 인테이크용 Adaptive Card (POC)"""
+    """법무 검토요청 인테이크용 Adaptive Card (실무형)"""
     return {
         "type": "AdaptiveCard",
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
@@ -1193,9 +1348,23 @@ def build_legal_intake_card(
         "body": [
             {
                 "type": "TextBlock",
-                "text": "법무 검토 요청",
+                "text": "법무 검토 요청서",
                 "weight": "Bolder",
                 "size": "Medium",
+            },
+            {
+                "type": "TextBlock",
+                "text": "진행상황과 추가 문의는 '내 요청함' 탭에서 확인합니다.",
+                "wrap": True,
+                "isSubtle": True,
+                "spacing": "Small",
+            },
+            {
+                "type": "TextBlock",
+                "text": "채팅 입력은 처리되지 않으며, 즉시 답변은 제공되지 않습니다.",
+                "wrap": True,
+                "isSubtle": True,
+                "spacing": "Small",
             },
             {
                 "type": "Input.Text",
@@ -1206,25 +1375,89 @@ def build_legal_intake_card(
                 **({"value": subject_value} if subject_value else {}),
             },
             {
+                "type": "Input.ChoiceSet",
+                "id": "request_type",
+                "label": "요청 유형",
+                "isRequired": True,
+                "style": "compact",
+                "choices": [
+                    {"title": "계약서", "value": "계약서"},
+                    {"title": "NDA/비밀유지", "value": "NDA"},
+                    {"title": "MOU/협약", "value": "MOU"},
+                    {"title": "개인정보/보안", "value": "개인정보"},
+                    {"title": "공정거래/컴플라이언스", "value": "컴플라이언스"},
+                    {"title": "기타", "value": "기타"},
+                ],
+            },
+            {
                 "type": "Input.Text",
-                "id": "description",
-                "label": "내용",
-                "placeholder": "검토 요청 내용을 입력하세요.",
+                "id": "counterparty",
+                "label": "거래처/상대방",
+                "placeholder": "예: ABC 주식회사",
+                "isRequired": True,
+            },
+            {
+                "type": "Input.Text",
+                "id": "amount",
+                "label": "계약 금액 (선택)",
+                "placeholder": "예: 1억 5천만원 / $100,000",
+            },
+            {
+                "type": "Input.Date",
+                "id": "due_date",
+                "label": "희망 완료일 (선택)",
+            },
+            {
+                "type": "Input.ChoiceSet",
+                "id": "priority",
+                "label": "긴급도",
+                "style": "compact",
+                "value": "보통",
+                "choices": [
+                    {"title": "긴급", "value": "긴급"},
+                    {"title": "높음", "value": "높음"},
+                    {"title": "보통", "value": "보통"},
+                    {"title": "낮음", "value": "낮음"},
+                ],
+            },
+            {
+                "type": "Input.ChoiceSet",
+                "id": "confidentiality",
+                "label": "기밀 등급 (선택)",
+                "style": "compact",
+                "choices": [
+                    {"title": "일반", "value": "일반"},
+                    {"title": "대외비", "value": "대외비"},
+                    {"title": "기밀", "value": "기밀"},
+                ],
+            },
+            {
+                "type": "Input.Text",
+                "id": "background",
+                "label": "배경/상황 (선택)",
+                "placeholder": "요청 배경 또는 맥락을 간단히 적어주세요.",
+                "isMultiline": True,
+            },
+            {
+                "type": "Input.Text",
+                "id": "request_detail",
+                "label": "검토 요청 내용",
+                "placeholder": "검토가 필요한 조항/쟁점/질문을 구체적으로 적어주세요.",
                 "isMultiline": True,
                 "isRequired": True,
                 **({"value": description_value} if description_value else {}),
             },
             {
                 "type": "Input.Text",
-                "id": "cc_emails",
-                "label": "열람자 이메일 (선택)",
-                "placeholder": "예: a@company.com, b@company.com",
-            },
-            {
-                "type": "Input.Text",
                 "id": "attachment_link",
                 "label": "첨부 링크 (선택)",
                 "placeholder": "SharePoint/OneDrive 링크",
+            },
+            {
+                "type": "Input.Text",
+                "id": "cc_emails",
+                "label": "열람자 이메일 (선택)",
+                "placeholder": "예: a@company.com, b@company.com",
             },
         ],
         "actions": [
@@ -1233,6 +1466,138 @@ def build_legal_intake_card(
                 "title": "접수하기",
                 "data": {"action": "create_legal_case"},
             }
+        ],
+    }
+
+
+def build_legal_prompt_menu_card() -> dict:
+    """Teams 채팅용 프롬프트 메뉴 카드"""
+    return {
+        "type": "AdaptiveCard",
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "version": "1.4",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": "법무 요청 안내",
+                "weight": "Bolder",
+                "size": "Medium",
+            },
+            {
+                "type": "TextBlock",
+                "text": "이 채팅은 입력을 받지 않습니다. 아래 메뉴를 선택하면 즉시 접수됩니다.",
+                "wrap": True,
+                "weight": "Bolder",
+                "color": "Attention",
+            },
+            {
+                "type": "TextBlock",
+                "text": "즉시 답변은 제공되지 않으며, 진행상황/추가 문의는 '내 요청함' 탭에서 확인합니다.",
+                "wrap": True,
+                "isSubtle": True,
+                "spacing": "Small",
+            },
+        ],
+        "actions": [
+            {
+                "type": "Action.Submit",
+                "title": "계약서 검토(표준)",
+                "data": {
+                    "action": "create_legal_case_quick",
+                    "request_type": "계약서 검토(표준)",
+                    "subject": "계약서 검토(표준)",
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "NDA/비밀유지",
+                "data": {
+                    "action": "create_legal_case_quick",
+                    "request_type": "NDA/비밀유지",
+                    "subject": "NDA/비밀유지",
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "거래처 조건 협의/특약 검토",
+                "data": {
+                    "action": "create_legal_case_quick",
+                    "request_type": "거래처 조건 협의/특약 검토",
+                    "subject": "거래처 조건 협의/특약 검토",
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "개인정보/보안 이슈",
+                "data": {
+                    "action": "create_legal_case_quick",
+                    "request_type": "개인정보/보안 이슈",
+                    "subject": "개인정보/보안 이슈",
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "공정거래/컴플라이언스 문의",
+                "data": {
+                    "action": "create_legal_case_quick",
+                    "request_type": "공정거래/컴플라이언스 문의",
+                    "subject": "공정거래/컴플라이언스 문의",
+                },
+            },
+            {
+                "type": "Action.Submit",
+                "title": "기타(추가 정보 요청 예정)",
+                "data": {
+                    "action": "create_legal_case_quick",
+                    "request_type": "기타(추가 정보 요청 예정)",
+                    "subject": "기타(추가 정보 요청 예정)",
+                },
+            },
+        ],
+    }
+
+
+def build_legal_intake_summary_card(
+    subject: str,
+    request_type: str,
+    counterparty: str,
+    due_date: str,
+    priority: str,
+) -> dict:
+    """접수 완료 후 요약 카드"""
+    summary_items = [
+        f"제목: {subject}",
+        f"유형: {request_type or '미입력'}",
+        f"거래처: {counterparty or '미입력'}",
+    ]
+    if due_date:
+        summary_items.append(f"희망 완료일: {due_date}")
+    if priority:
+        summary_items.append(f"긴급도: {priority}")
+
+    return {
+        "type": "AdaptiveCard",
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "version": "1.4",
+        "body": [
+            {
+                "type": "TextBlock",
+                "text": "✅ 요청서 제출 완료",
+                "weight": "Bolder",
+                "size": "Medium",
+            },
+            {
+                "type": "TextBlock",
+                "text": "\n".join(summary_items),
+                "wrap": True,
+            },
+            {
+                "type": "TextBlock",
+                "text": "즉시 답변은 제공되지 않습니다. 진행상황과 추가 문의는 '내 요청함' 탭에서 확인하세요.",
+                "isSubtle": True,
+                "wrap": True,
+                "spacing": "Small",
+            },
         ],
     }
 
