@@ -24,6 +24,7 @@ logger = get_logger(__name__)
 
 API_TIMEOUT = 30.0
 AGENT_CACHE_TTL_SECONDS = 1800
+FIELD_CACHE_TTL_SECONDS = 6 * 60 * 60
 
 
 @dataclass
@@ -47,6 +48,8 @@ class FreshdeskClient:
 
         self.api_url = f"{self.base_url}/api/v2"
         self._agent_cache: dict[str, CachedAgent] = {}
+        self._field_cache: dict[str, Any] = {}
+        self._field_cache_expires_at: float = 0.0
 
     def _get_auth_header(self) -> dict[str, str]:
         credentials = f"{self.api_key}:X"
@@ -163,6 +166,55 @@ class FreshdeskClient:
         params = {"include": "requester"} if include_requester else None
         result = await self._request("GET", url, params=params)
         return result if isinstance(result, dict) else None
+
+    async def get_ticket_field_mappings(self) -> dict[str, dict[int, str]]:
+        """Freshdesk 티켓 필드(상태/우선순위) 매핑 조회 (캐시)"""
+        now = time.time()
+        if self._field_cache and now < self._field_cache_expires_at:
+            return self._field_cache
+
+        url = f"{self.api_url}/ticket_fields"
+        result = await self._request("GET", url)
+        if not isinstance(result, list):
+            return self._field_cache or {}
+
+        status_map: dict[int, str] = {}
+        priority_map: dict[int, str] = {}
+
+        for field in result:
+            if not isinstance(field, dict):
+                continue
+            name = field.get("name")
+            choices = field.get("choices")
+            if name == "status" and isinstance(choices, dict):
+                for key, value in choices.items():
+                    try:
+                        code = int(key)
+                    except Exception:
+                        continue
+                    label = ""
+                    if isinstance(value, list) and value:
+                        # [label, label_for_customers]
+                        label = value[-1] or value[0]
+                    elif isinstance(value, str):
+                        label = value
+                    if label:
+                        status_map[code] = label
+            elif name == "priority" and isinstance(choices, dict):
+                for label, code in choices.items():
+                    try:
+                        code_int = int(code)
+                    except Exception:
+                        continue
+                    if isinstance(label, str) and label:
+                        priority_map[code_int] = label
+
+        self._field_cache = {
+            "status": status_map,
+            "priority": priority_map,
+        }
+        self._field_cache_expires_at = now + FIELD_CACHE_TTL_SECONDS
+        return self._field_cache
 
     async def add_public_inquiry_note(
         self,

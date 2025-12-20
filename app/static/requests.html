@@ -230,7 +230,11 @@
         document.getElementById('detail-desc').textContent = t.description_text || '';
 
         const statusText = String(t.status ?? '').trim();
-        const isBlocked = !!t.is_done || statusText === '해결됨' || statusText === '종료';
+        const isBlocked = !!t.is_done
+          || statusText === '해결됨'
+          || statusText === '종료'
+          || statusText === 'Resolved'
+          || statusText === 'Closed';
         document.getElementById('btn-send').disabled = isBlocked;
       } catch (e) {
         show(inquiryErr, e.message || String(e));

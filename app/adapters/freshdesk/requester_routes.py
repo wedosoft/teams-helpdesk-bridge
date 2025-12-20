@@ -84,6 +84,10 @@ async def list_my_requests(
     if not client:
         raise HTTPException(status_code=500, detail="Failed to create Freshdesk client")
 
+    mappings = await client.get_ticket_field_mappings()
+    status_map = mappings.get("status", {})
+    priority_map = mappings.get("priority", {})
+
     tickets = await client.list_tickets_for_requester(
         requester_email=requester_email,
         page=page,
@@ -102,12 +106,25 @@ async def list_my_requests(
         if when and when < cutoff:
             continue
 
+        status_value = t.get("status")
+        priority_value = t.get("priority")
+        status_code = None
+        priority_code = None
+        try:
+            status_code = int(status_value)
+        except Exception:
+            status_code = None
+        try:
+            priority_code = int(priority_value)
+        except Exception:
+            priority_code = None
+
         items.append(
             {
                 "id": t.get("id"),
                 "subject": t.get("subject"),
-                "status": t.get("status"),
-                "priority": t.get("priority"),
+                "status": status_map.get(status_code, status_value),
+                "priority": priority_map.get(priority_code, priority_value),
                 "responder_id": t.get("responder_id"),
                 "created_at": t.get("created_at"),
                 "updated_at": t.get("updated_at"),
@@ -146,6 +163,10 @@ async def get_request_detail(
     if not client:
         raise HTTPException(status_code=500, detail="Failed to create Freshdesk client")
 
+    mappings = await client.get_ticket_field_mappings()
+    status_map = mappings.get("status", {})
+    priority_map = mappings.get("priority", {})
+
     ticket = await client.view_ticket(ticket_id=ticket_id, include_requester=True)
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
@@ -157,12 +178,25 @@ async def get_request_detail(
     if ticket_requester_email and ticket_requester_email != requester_email.lower():
         raise HTTPException(status_code=403, detail="Forbidden (not your ticket)")
 
+    status_value = ticket.get("status")
+    priority_value = ticket.get("priority")
+    status_code = None
+    priority_code = None
+    try:
+        status_code = int(status_value)
+    except Exception:
+        status_code = None
+    try:
+        priority_code = int(priority_value)
+    except Exception:
+        priority_code = None
+
     return {
         "id": ticket.get("id"),
         "subject": ticket.get("subject"),
         "description_text": ticket.get("description_text"),
-        "status": ticket.get("status"),
-        "priority": ticket.get("priority"),
+        "status": status_map.get(status_code, status_value),
+        "priority": priority_map.get(priority_code, priority_value),
         "responder_id": ticket.get("responder_id"),
         "cc_emails": ticket.get("cc_emails") or [],
         "custom_fields": ticket.get("custom_fields") or {},
