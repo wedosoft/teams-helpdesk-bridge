@@ -199,6 +199,8 @@ class TeamsBot:
                 "subject": subject or "법무 검토 요청",
                 "description": final_description,
                 "cc_emails": cc_emails,
+                "requester_email": user.email,
+                "requester_name": user.name,
                 "force_new_conversation": True,
             },
         )

@@ -216,6 +216,8 @@ class FreshdeskClient:
         """Freshdesk Ticket 생성 (케이스 생성)"""
         subject = (metadata or {}).get("subject") or self._extract_subject(message_text)
         description = (metadata or {}).get("description") or (message_text or "")
+        requester_email = (metadata or {}).get("requester_email") or user_id
+        requester_name = (metadata or {}).get("requester_name") or user_name
 
         # 일부 Freshdesk 계정/포털 설정에서는 status/priority가 필수인 경우가 있어 기본값을 제공한다.
         # status: 2(Open), 3(Pending), 4(Resolved), 5(Closed), 6(Waiting on Customer), 7(Waiting on Third Party)
@@ -248,10 +250,12 @@ class FreshdeskClient:
         payload: dict[str, Any] = {
             "subject": subject,
             "description": description,
-            "email": user_id,
+            "email": requester_email,
             "status": status_value,
             "priority": priority_value,
         }
+        if requester_name:
+            payload["name"] = requester_name
 
         if cc_emails:
             payload["cc_emails"] = cc_emails
@@ -284,9 +288,15 @@ class FreshdeskClient:
 
         private_note = bool((metadata or {}).get("private", False))
 
+        if not private_note:
+            return await self.add_public_inquiry_note(
+                ticket_id=conversation_id,
+                body=body,
+            )
+
         payload = {
             "body": body,
-            "private": private_note,
+            "private": True,
         }
 
         url = f"{self.api_url}/tickets/{conversation_id}/notes"
