@@ -138,6 +138,14 @@ class MessageRouter:
         try:
             # Freshdesk(법무 POC): 기존 티켓 연결 및 인테이크 카드 흐름
             if tenant.platform == Platform.FRESHDESK:
+                quick = self._build_quick_case_metadata(message.text or "")
+                if quick:
+                    metadata = dict(getattr(message, "metadata", None) or {})
+                    metadata.update(quick)
+                    metadata["force_new_conversation"] = True
+                    message.metadata = metadata
+                    message.text = quick.get("description", message.text)
+
                 handled = await self._handle_freshdesk_link_or_intake(
                     context=context,
                     message=message,
@@ -743,6 +751,35 @@ class MessageRouter:
             return any(lower_name.endswith(ext) for ext in image_exts)
 
         return False
+
+    def _build_quick_case_metadata(self, text: str) -> Optional[dict]:
+        """프롬프트 보기/메뉴 선택 텍스트를 간편 접수로 변환"""
+        if not text:
+            return None
+        label = text.strip()
+        quick_labels = {
+            "계약서 검토(표준)",
+            "NDA/비밀유지",
+            "거래처 조건 협의/특약 검토",
+            "개인정보/보안 이슈",
+            "공정거래/컴플라이언스 문의",
+            "기타(추가 정보 요청 예정)",
+        }
+        if label not in quick_labels:
+            return None
+
+        description = "\n".join(
+            [
+                "[간편 접수]",
+                f"- 유형: {label}",
+                "- 상세 내용은 '내 요청함'에서 추가 요청 예정",
+            ]
+        )
+        return {
+            "subject": label,
+            "description": description,
+            "request_type": label,
+        }
 
     def _is_video_content_type(self, content_type: Optional[str], filename: Optional[str]) -> bool:
         """비디오 content_type 또는 파일 확장자 확인"""

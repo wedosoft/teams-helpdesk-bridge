@@ -759,23 +759,6 @@ class TeamsBot:
                 if self._welcome_message:
                     await context.send_activity(self._welcome_message)
 
-                # 초기 프롬프트 메뉴 표시
-                try:
-                    menu_card = build_legal_prompt_menu_card()
-                    await context.send_activity(
-                        Activity(
-                            type=ActivityTypes.message,
-                            attachments=[
-                                Attachment(
-                                    content_type="application/vnd.microsoft.card.adaptive",
-                                    content=menu_card,
-                                )
-                            ],
-                        )
-                    )
-                except Exception as e:
-                    logger.warning("Failed to send prompt menu", error=str(e))
-
     async def _handle_installation_update(self, context: TurnContext) -> None:
         """설치 업데이트 핸들러"""
         activity = context.activity
