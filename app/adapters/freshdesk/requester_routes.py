@@ -123,7 +123,7 @@ async def list_my_requests(
         responder_name = None
         if responder_id is not None:
             try:
-                responder_name = await client.get_agent_name(str(responder_id))
+                responder_name = await client.get_agent_name_with_fallback(str(responder_id))
             except Exception:
                 responder_name = None
 
@@ -207,7 +207,7 @@ async def get_request_detail(
         "status": status_map.get(status_code, status_value),
         "priority": priority_map.get(priority_code, priority_value),
         "responder_id": ticket.get("responder_id"),
-        "responder_name": await client.get_agent_name(str(ticket.get("responder_id")))
+        "responder_name": await client.get_agent_name_with_fallback(str(ticket.get("responder_id")))
         if ticket.get("responder_id") is not None
         else None,
         "cc_emails": ticket.get("cc_emails") or [],

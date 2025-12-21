@@ -225,7 +225,7 @@
         document.getElementById('detail-subject').textContent = t.subject || '(제목 없음)';
         document.getElementById('detail-status').textContent = String(t.status ?? '-');
         document.getElementById('detail-priority').textContent = String(t.priority ?? '-');
-        document.getElementById('detail-responder').textContent = t.responder_name || String(t.responder_id ?? 'unassigned');
+        document.getElementById('detail-responder').textContent = t.responder_name || '미배정';
         document.getElementById('detail-updated').textContent = formatDate(t.updated_at);
         document.getElementById('detail-desc').textContent = t.description_text || '';
 

@@ -24,6 +24,7 @@ logger = get_logger(__name__)
 
 API_TIMEOUT = 30.0
 AGENT_CACHE_TTL_SECONDS = 1800
+AGENT_LIST_CACHE_TTL_SECONDS = 1800
 FIELD_CACHE_TTL_SECONDS = 6 * 60 * 60
 
 
@@ -48,6 +49,8 @@ class FreshdeskClient:
 
         self.api_url = f"{self.base_url}/api/v2"
         self._agent_cache: dict[str, CachedAgent] = {}
+        self._agent_list_cache: dict[str, CachedAgent] = {}
+        self._agent_list_cache_expires_at: float = 0.0
         self._field_cache: dict[str, Any] = {}
         self._field_cache_expires_at: float = 0.0
 
@@ -390,3 +393,38 @@ class FreshdeskClient:
 
         self._agent_cache[agent_id] = CachedAgent(name=name, cached_at=time.time())
         return name
+
+    async def _refresh_agent_list_cache(self) -> None:
+        url = f"{self.api_url}/agents"
+        result = await self._request("GET", url)
+        if not isinstance(result, list):
+            return
+        now = time.time()
+        for agent in result:
+            if not isinstance(agent, dict):
+                continue
+            agent_id = agent.get("id")
+            name = agent.get("contact", {}).get("name") or agent.get("name")
+            if agent_id is None or not name:
+                continue
+            self._agent_list_cache[str(agent_id)] = CachedAgent(
+                name=name,
+                cached_at=now,
+            )
+        self._agent_list_cache_expires_at = now + AGENT_LIST_CACHE_TTL_SECONDS
+
+    async def get_agent_name_with_fallback(self, agent_id: str) -> Optional[str]:
+        """Agent 이름 조회 (개별 조회 실패 시 목록 캐시로 fallback)"""
+        name = await self.get_agent_name(agent_id)
+        if name:
+            return name
+
+        now = time.time()
+        if not self._agent_list_cache or now >= self._agent_list_cache_expires_at:
+            try:
+                await self._refresh_agent_list_cache()
+            except Exception:
+                return None
+
+        cached = self._agent_list_cache.get(agent_id)
+        return cached.name if cached else None
