@@ -257,27 +257,40 @@ async def save_tenant_config(
             
             # Construct nested objects
             platform_val = data.get("platform")
+            
+            # Clean data for Pydantic
+            clean_data = {
+                "platform": platform_val,
+                "bot_name": data.get("bot_name"),
+                "welcome_message": data.get("welcome_message"),
+            }
+
             if platform_val == "freshchat":
-                data["freshchat"] = {
+                clean_data["freshchat"] = {
                     "api_key": data.get("freshchat_api_key"),
                     "api_url": data.get("freshchat_api_url"),
                     "inbox_id": data.get("freshchat_inbox_id"),
                     "webhook_public_key": data.get("freshchat_webhook_public_key"),
                 }
             elif platform_val == "zendesk":
-                data["zendesk"] = {
+                clean_data["zendesk"] = {
                     "subdomain": data.get("zendesk_subdomain"),
                     "email": data.get("zendesk_email"),
                     "api_token": data.get("zendesk_api_token"),
                 }
             elif platform_val == "freshdesk":
-                data["freshdesk"] = {
-                    "base_url": data.get("freshdesk_base_url"),
-                    "api_key": data.get("freshdesk_api_key"),
-                }
+                # Only add if fields are present to avoid validation error on None
+                base_url = data.get("freshdesk_base_url")
+                api_key = data.get("freshdesk_api_key")
+                if base_url and api_key:
+                    clean_data["freshdesk"] = {
+                        "base_url": base_url,
+                        "api_key": api_key,
+                    }
             
-            setup_request = TenantSetupRequest(**data)
+            setup_request = TenantSetupRequest(**clean_data)
         except Exception as e:
+            logger.error(f"Form Data Parsing Error: {str(e)}", exc_info=True)
             raise HTTPException(status_code=400, detail=f"Invalid Form Data: {str(e)}")
     else:
         raise HTTPException(status_code=400, detail="Unsupported Content-Type")

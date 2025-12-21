@@ -132,8 +132,20 @@ async def tab_requests():
 
 
 @app.get("/admin/setup")
-async def admin_setup():
+async def admin_setup(request: Request):
     """관리자 설정 페이지 (OAuth 로그인 후)"""
+    # 쿠키 세션 확인
+    session_id = request.cookies.get("admin_session")
+    if not session_id:
+        return RedirectResponse(url="/api/admin/login")
+        
+    from app.admin.oauth import admin_sessions
+    from datetime import datetime
+    
+    session = admin_sessions.get(session_id)
+    if not session or session["expires_at"] <= datetime.utcnow():
+        return RedirectResponse(url="/api/admin/login")
+        
     return FileResponse(STATIC_DIR / "admin-setup.html")
 
 
