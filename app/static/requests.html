@@ -192,6 +192,12 @@
           </tr>
         `).join('');
 
+        const params = new URLSearchParams(location.search);
+        const ticket = params.get('ticket');
+        if (ticket) {
+          await selectTicket(ticket);
+        }
+
       } catch (e) {
         show(listErr, e.message || String(e));
         tbody.innerHTML = `<tr><td colspan="4" class="muted">-</td></tr>`;

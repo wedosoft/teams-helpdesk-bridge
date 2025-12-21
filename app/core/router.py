@@ -538,6 +538,30 @@ class MessageRouter:
             if client:
                 agent_name = await client.get_agent_name(message.actor_id)
 
+        if tenant.platform == Platform.FRESHDESK and message.actor_type == "agent":
+            from botbuilder.schema import Attachment
+
+            case_id = mapping.platform_conversation_id or mapping.platform_conversation_numeric_id or ""
+            notice_type = self._detect_freshdesk_notice_type(message.text or "")
+            card = self._build_freshdesk_notice_card(
+                agent_name=agent_name,
+                body=message.text or "",
+                case_id=case_id,
+                notice_type=notice_type,
+            )
+            await self.bot.send_proactive_message(
+                conversation_reference=mapping.conversation_reference,
+                text=None,
+                attachments=[
+                    Attachment(
+                        content_type="application/vnd.microsoft.card.adaptive",
+                        content=card,
+                    )
+                ],
+                sender_name=agent_name,
+            )
+            return
+
         # 텍스트와 첨부파일을 하나의 메시지로 통합 전송
         await self._send_combined_message_to_teams(
             text=message.text,
@@ -782,6 +806,76 @@ class MessageRouter:
             return any(lower_name.endswith(ext) for ext in video_exts)
 
         return False
+
+    def _detect_freshdesk_notice_type(self, body: str) -> str:
+        """공식 알림 유형 추정"""
+        text = body or ""
+        keywords = ["추가 자료", "추가자료", "추가 요청", "자료 요청", "보완", "첨부", "추가 제출"]
+        if any(k in text for k in keywords):
+            return "추가 자료 요청"
+        return "법무팀 답변"
+
+    def _build_freshdesk_notice_card(
+        self,
+        agent_name: Optional[str],
+        body: str,
+        case_id: str,
+        notice_type: str,
+    ) -> dict:
+        """Freshdesk 에이전트 공개 메모를 공식 알림 카드로 변환"""
+        link = self._build_request_tab_link(case_id)
+        facts = [
+            {"title": "알림 유형", "value": notice_type},
+            {"title": "담당자", "value": agent_name or "법무팀"},
+        ]
+        if case_id:
+            facts.append({"title": "케이스", "value": f"#{case_id}"})
+
+        body_text = (body or "").strip() or "(내용 없음)"
+
+        card = {
+            "type": "AdaptiveCard",
+            "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+            "version": "1.4",
+            "body": [
+                {
+                    "type": "TextBlock",
+                    "text": "법무팀 안내",
+                    "weight": "Bolder",
+                    "size": "Medium",
+                },
+                {
+                    "type": "TextBlock",
+                    "text": notice_type,
+                    "weight": "Bolder",
+                    "color": "Attention" if notice_type == "추가 자료 요청" else "Good",
+                    "spacing": "Small",
+                },
+                {"type": "FactSet", "facts": facts},
+                {
+                    "type": "TextBlock",
+                    "text": body_text,
+                    "wrap": True,
+                    "spacing": "Medium",
+                },
+            ],
+            "actions": [
+                {
+                    "type": "Action.OpenUrl",
+                    "title": "내 요청함에서 확인",
+                    "url": link,
+                }
+            ]
+            if link
+            else [],
+        }
+        return card
+
+    def _build_request_tab_link(self, case_id: str) -> Optional[str]:
+        """내 요청함 탭 딥링크 생성 (케이스 상세)"""
+        if not case_id:
+            return "https://teams.wedosoft.net/tab/requests"
+        return f"https://teams.wedosoft.net/tab/requests?ticket={case_id}"
 
     async def _process_attachment_parallel(
         self,
