@@ -226,10 +226,6 @@ async def get_platform_fields(platform: str):
                 <label>API Key</label>
                 <input type="password" name="freshdesk_api_key" required>
             </div>
-            <div class="form-group">
-                <label>Weight Field Key (Optional)</label>
-                <input type="text" name="freshdesk_weight_field_key" placeholder="cf_weight">
-            </div>
         """
     return ""
 
@@ -278,7 +274,6 @@ async def save_tenant_config(
                 data["freshdesk"] = {
                     "base_url": data.get("freshdesk_base_url"),
                     "api_key": data.get("freshdesk_api_key"),
-                    "weight_field_key": data.get("freshdesk_weight_field_key"),
                 }
             
             setup_request = TenantSetupRequest(**data)
