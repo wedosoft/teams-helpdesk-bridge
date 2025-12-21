@@ -10,7 +10,7 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f5f5; color: #222; padding: 16px; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
     .container { max-width: 1100px; margin: 0 auto; display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 16px; flex: 1; height: 100%; overflow: hidden; width: 100%; }
-    .card { background: #fff; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); padding: 16px; display: flex; flex-direction: column; height: 100%; max-height: 100%; }
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); padding: 16px; display: flex; flex-direction: column; height: 100%; max-height: 100%; min-height: 0; overflow: hidden; }
     h1 { font-size: 18px; margin-bottom: 10px; }
     .muted { color: #666; font-size: 12px; }
     .row { display: flex; gap: 8px; align-items: center; }
@@ -37,12 +37,36 @@
     .success { margin-top: 10px; padding: 10px; background: #eef9f0; border: 1px solid #cfead6; color: #1b5e20; border-radius: 8px; font-size: 13px; }
     
     /* Scrollable areas */
-    .scroll-area { flex: 1; overflow-y: auto; }
+    .scroll-area { flex: 1; overflow-y: auto; min-height: 0; }
+    .list-scroll { flex: 1; overflow: auto; min-height: 0; }
+    .list-footer { padding-top: 10px; border-top: 1px solid #f0f0f0; }
+
+    /* Table column sizing (status wider than title) */
+    .th-title { width: 22%; }
+    .th-assignee { width: 14%; }
+    .th-updated { width: 16%; }
+    .th-status { width: 34%; }
+    .th-action { width: 14%; }
+
+    td.col-title .title-main {
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    td.col-assignee, td.col-updated {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    td.col-status {
+      white-space: normal;
+      line-height: 1.25;
+    }
+    td.col-action { white-space: nowrap; }
 
     @media (max-width: 960px) { 
-        .container { grid-template-columns: 1fr; grid-template-rows: auto 1fr; } 
-        /* 목록은 내용만큼만 차지하되 너무 길어지지 않게 (페이지네이션으로 제어) */
-        .card.list-card { height: auto; max-height: 50vh; }
+        .container { grid-template-columns: 1fr; grid-template-rows: minmax(220px, 45vh) 1fr; }
     }
   </style>
 </head>
@@ -52,16 +76,21 @@
       <div class="row">
         <div>
           <h1>내 요청함</h1>
-          <div class="muted" id="whoami"></div>
         </div>
         <div class="spacer"></div>
-        <button class="btn ghost" hx-get="/api/freshdesk/requests?page=1" hx-target="#list-container">새로고침</button>
+        <button class="btn ghost" hx-get="/api/freshdesk/requests?page=1&per_page=5" hx-target="#list-table">새로고침</button>
       </div>
 
       <div id="list-error" class="error" style="display:none;"></div>
 
-        <div id="list-container">
+      <div class="list-scroll">
+        <div id="list-table">
           <div style="padding: 20px; text-align: center; color: #666;">불러오는 중...</div>
+        </div>
+      </div>
+
+      <div class="list-footer">
+        <div id="list-pagination" class="muted" style="text-align:center;">&nbsp;</div>
       </div>
       
       <div class="notice">진행상황 확인과 추가 문의는 이 화면에서 처리됩니다.</div>
@@ -101,11 +130,9 @@
             }
         });
 
-        document.getElementById("whoami").innerText = userEmail || '(요청자 이메일은 서버 설정으로 고정됨)';
-
         // 첫 로드: hx-trigger에 의존하지 않고, 헤더 주입 설정 이후 htmx.ajax로 강제 로드
-        htmx.ajax("GET", "/api/freshdesk/requests?page=1", {
-          target: "#list-container",
+        htmx.ajax("GET", "/api/freshdesk/requests?page=1&per_page=5", {
+          target: "#list-table",
           swap: "innerHTML",
         });
       });

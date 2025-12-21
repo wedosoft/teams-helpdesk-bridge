@@ -70,7 +70,7 @@ def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
 async def list_my_requests(
     request: Request,
     page: int = 1,
-    per_page: int = 10,  # Narrow screen friendly default
+    per_page: int = 5,  # POC: keep list compact
     recent_days: int = 30,
     ctx: tuple[str, str] = Depends(get_request_context),
 ) -> Union[dict, HTMLResponse]:
@@ -105,6 +105,8 @@ async def list_my_requests(
         page=page,
         per_page=per_page,
     )
+
+    raw_page_size = len(tickets)
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=recent_days)
 
@@ -154,44 +156,46 @@ async def list_my_requests(
     if request.headers.get("HX-Request"):
         rows_html = ""
         if not items:
-            rows_html = '<tr><td colspan="4" class="muted" style="text-align:center; padding: 20px;">요청 내역이 없습니다.</td></tr>'
+            rows_html = '<tr><td colspan="5" class="muted" style="text-align:center; padding: 20px;">요청 내역이 없습니다.</td></tr>'
         else:
             for item in items:
                 status_class = "done" if item["is_done"] else "open"
                 updated_str = _parse_iso_datetime(item["updated_at"]).strftime("%Y-%m-%d %H:%M") if item["updated_at"] else "-"
+                assignee_str = item.get("responder_name") or "-"
                 
                 rows_html += f"""
                 <tr style="cursor:pointer;" 
                     hx-get="/api/freshdesk/requests/{item['id']}" 
                     hx-target="#detail-container"
                     hx-trigger="click"
-                    onclick="document.querySelectorAll('tr').forEach(tr => tr.style.background=''); this.style.background='#f0f0f0';">
-                    <td><span class="pill {status_class}">{item['status']}</span></td>
-                    <td>
-                        <div style="font-weight:600; margin-bottom:4px;">{item['subject']}</div>
+                    onclick="document.querySelectorAll('tbody tr').forEach(tr => tr.style.background=''); this.style.background='#f0f0f0';">
+                    <td class="col-title">
+                        <div class="title-main">{item['subject']}</div>
                         <div class="muted">#{item['id']}</div>
                     </td>
-                    <td class="muted">{updated_str}</td>
-                    <td><button class="btn ghost" style="padding:4px 8px; font-size:12px;">상세보기</button></td>
+                    <td class="col-assignee muted" title="{assignee_str}">{assignee_str}</td>
+                    <td class="col-updated muted">{updated_str}</td>
+                    <td class="col-status"><span class="pill {status_class}">{item['status']}</span></td>
+                    <td class="col-action"><button class="btn ghost" style="padding:4px 8px; font-size:12px;">상세보기</button></td>
                 </tr>
                 """
         
         # Pagination Controls
         prev_disabled = "disabled" if page <= 1 else ""
-        next_disabled = "disabled" if len(items) < per_page else ""
+        next_disabled = "disabled" if raw_page_size < per_page else ""
         
-        pagination_html = f"""
-        <div style="display:flex; justify-content:center; gap:10px; margin-top:16px; align-items:center;">
-            <button class="btn ghost" 
-                hx-get="/api/freshdesk/requests?page={page-1}&per_page={per_page}" 
-                hx-target="#list-container" 
+        pagination_oob = f"""
+        <div id=\"list-pagination\" hx-swap-oob=\"true\" style=\"display:flex; justify-content:center; gap:10px; align-items:center; padding-top:10px;\">
+            <button class=\"btn ghost\" 
+                hx-get=\"/api/freshdesk/requests?page={page-1}&per_page={per_page}\" 
+                hx-target=\"#list-table\" 
                 {prev_disabled}>
                 &lt; 이전
             </button>
-            <span class="muted">Page {page}</span>
-            <button class="btn ghost" 
-                hx-get="/api/freshdesk/requests?page={page+1}&per_page={per_page}" 
-                hx-target="#list-container" 
+            <span class=\"muted\">Page {page}</span>
+            <button class=\"btn ghost\" 
+                hx-get=\"/api/freshdesk/requests?page={page+1}&per_page={per_page}\" 
+                hx-target=\"#list-table\" 
                 {next_disabled}>
                 다음 &gt;
             </button>
@@ -202,17 +206,18 @@ async def list_my_requests(
             <table>
                 <thead>
                     <tr>
-                        <th style="width: 80px;">상태</th>
-                        <th>제목</th>
-                        <th style="width: 110px;">업데이트</th>
-                        <th style="width: 80px;">동작</th>
+                        <th class="th-title">제목</th>
+                        <th class="th-assignee">담당자</th>
+                        <th class="th-updated">업데이트</th>
+                        <th class="th-status">상태</th>
+                        <th class="th-action">상세보기</th>
                     </tr>
                 </thead>
                 <tbody>
                     {rows_html}
                 </tbody>
             </table>
-            {pagination_html}
+            {pagination_oob}
         """)
 
     return {
