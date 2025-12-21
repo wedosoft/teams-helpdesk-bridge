@@ -15,8 +15,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
+from typing import Union
 
 from app.core.tenant import Platform, get_tenant_service
 from app.core.platform_factory import get_platform_factory
@@ -60,13 +62,14 @@ def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
-@router.get("/requests")
+@router.get("/requests", response_model=Union[dict, str])
 async def list_my_requests(
+    request: Request,
     page: int = 1,
-    per_page: int = 30,
+    per_page: int = 10,  # Narrow screen friendly default
     recent_days: int = 30,
     ctx: tuple[str, str] = Depends(get_request_context),
-) -> dict:
+) -> Union[dict, HTMLResponse]:
     teams_tenant_id, requester_email = ctx
 
     tenant_service = get_tenant_service()
@@ -143,6 +146,71 @@ async def list_my_requests(
             }
         )
 
+    # HTMX Response
+    if request.headers.get("HX-Request"):
+        rows_html = ""
+        if not items:
+            rows_html = '<tr><td colspan="4" class="muted" style="text-align:center; padding: 20px;">요청 내역이 없습니다.</td></tr>'
+        else:
+            for item in items:
+                status_class = "done" if item["is_done"] else "open"
+                updated_str = _parse_iso_datetime(item["updated_at"]).strftime("%Y-%m-%d %H:%M") if item["updated_at"] else "-"
+                
+                rows_html += f"""
+                <tr style="cursor:pointer;" 
+                    hx-get="/api/freshdesk/requests/{item['id']}" 
+                    hx-target="#detail-container"
+                    hx-trigger="click"
+                    onclick="document.querySelectorAll('tr').forEach(tr => tr.style.background=''); this.style.background='#f0f0f0';">
+                    <td><span class="pill {status_class}">{item['status']}</span></td>
+                    <td>
+                        <div style="font-weight:600; margin-bottom:4px;">{item['subject']}</div>
+                        <div class="muted">#{item['id']}</div>
+                    </td>
+                    <td class="muted">{updated_str}</td>
+                    <td><button class="btn ghost" style="padding:4px 8px; font-size:12px;">상세보기</button></td>
+                </tr>
+                """
+        
+        # Pagination Controls
+        prev_disabled = "disabled" if page <= 1 else ""
+        next_disabled = "disabled" if len(items) < per_page else ""
+        
+        pagination_html = f"""
+        <div style="display:flex; justify-content:center; gap:10px; margin-top:16px; align-items:center;">
+            <button class="btn ghost" 
+                hx-get="/api/freshdesk/requests?page={page-1}&per_page={per_page}" 
+                hx-target="#list-container" 
+                {prev_disabled}>
+                &lt; 이전
+            </button>
+            <span class="muted">Page {page}</span>
+            <button class="btn ghost" 
+                hx-get="/api/freshdesk/requests?page={page+1}&per_page={per_page}" 
+                hx-target="#list-container" 
+                {next_disabled}>
+                다음 &gt;
+            </button>
+        </div>
+        """
+        
+        return HTMLResponse(content=f"""
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 80px;">상태</th>
+                        <th>제목</th>
+                        <th style="width: 110px;">업데이트</th>
+                        <th style="width: 80px;">동작</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows_html}
+                </tbody>
+            </table>
+            {pagination_html}
+        """)
+
     return {
         "email": requester_email,
         "page": page,
@@ -152,11 +220,12 @@ async def list_my_requests(
     }
 
 
-@router.get("/requests/{ticket_id}")
+@router.get("/requests/{ticket_id}", response_model=Union[dict, str])
 async def get_request_detail(
+    request: Request,
     ticket_id: str,
     ctx: tuple[str, str] = Depends(get_request_context),
-) -> dict:
+) -> Union[dict, HTMLResponse]:
     teams_tenant_id, requester_email = ctx
 
     tenant_service = get_tenant_service()
@@ -210,6 +279,55 @@ async def get_request_detail(
             responder_map = {}
         responder_name = responder_map.get(str(ticket.get("responder_id")))
 
+    # HTMX Response
+    if request.headers.get("HX-Request"):
+        updated_str = _parse_iso_datetime(ticket.get("updated_at")).strftime("%Y-%m-%d %H:%M") if ticket.get("updated_at") else "-"
+        status_display = status_map.get(status_code, status_value)
+        priority_display = priority_map.get(priority_code, priority_value)
+        is_done = _is_done(ticket.get("status"))
+        
+        inquiry_section = ""
+        if not is_done:
+            inquiry_section = f"""
+            <div style="margin-top:14px;">
+                <div class="row" style="margin-bottom:8px;">
+                    <h2 style="font-size:14px; margin:0;">추가 문의(공개 메모)</h2>
+                </div>
+                <form hx-post="/api/freshdesk/requests/{ticket_id}/inquiry" hx-target="#inquiry-result">
+                    <textarea name="body" placeholder="추가로 전달할 내용을 입력하세요." style="width:100%; min-height:80px; padding:8px; border:1px solid #ddd; border-radius:4px;"></textarea>
+                    <div class="muted" style="margin-top:6px; font-size:12px;">추가 문의는 티켓에 공개 메모로 기록됩니다.</div>
+                    <div style="margin-top:10px; text-align:right;">
+                        <button type="submit" class="btn primary">보내기</button>
+                    </div>
+                </form>
+                <div id="inquiry-result"></div>
+            </div>
+            """
+        else:
+            inquiry_section = '<div class="muted" style="margin-top:20px; padding:10px; background:#f5f5f5; border-radius:4px;">* 종료된 티켓에는 문의를 추가할 수 없습니다.</div>'
+
+        return HTMLResponse(content=f"""
+            <div class="row">
+                <h1 style="margin-bottom:0;">상세 #{ticket.get('id')}</h1>
+                <div class="spacer"></div>
+            </div>
+
+            <h2 style="margin-top:10px; font-size:16px;">{ticket.get('subject')}</h2>
+            
+            <div class="kv">
+                <div class="k">상태</div><div>{status_display}</div>
+                <div class="k">우선순위</div><div>{priority_display}</div>
+                <div class="k">담당자</div><div>{responder_name or '-'}</div>
+                <div class="k">업데이트</div><div>{updated_str}</div>
+            </div>
+
+            <div class="desc" style="margin-top:12px; padding:12px; background:#f7f7f7; border-radius:8px; font-size:13px; white-space:pre-wrap; max-height:300px; overflow:auto;">
+                {ticket.get('description_text') or '(내용 없음)'}
+            </div>
+
+            {inquiry_section}
+        """)
+
     return {
         "id": ticket.get("id"),
         "subject": ticket.get("subject"),
@@ -227,13 +345,26 @@ async def get_request_detail(
     }
 
 
-@router.post("/requests/{ticket_id}/inquiry")
+@router.post("/requests/{ticket_id}/inquiry", response_model=Union[dict, str])
 async def add_inquiry(
+    request: Request,
     ticket_id: str,
-    req: InquiryRequest,
+    req: InquiryRequest = None,  # Optional for Form Data
     ctx: tuple[str, str] = Depends(get_request_context),
-) -> dict:
+) -> Union[dict, HTMLResponse]:
     teams_tenant_id, requester_email = ctx
+
+    # Handle Form Data for HTMX
+    body_text = ""
+    if request.headers.get("HX-Request"):
+        form = await request.form()
+        body_text = form.get("body", "")
+    elif req:
+        body_text = req.body
+    
+    body_text = (body_text or "").strip()
+    if not body_text:
+        raise HTTPException(status_code=400, detail="Body is required")
 
     tenant_service = get_tenant_service()
     try:
@@ -262,12 +393,8 @@ async def add_inquiry(
     if _is_done(ticket.get("status")):
         raise HTTPException(status_code=409, detail="Ticket is already resolved/closed")
 
-    body = (req.body or "").strip()
-    if not body:
-        raise HTTPException(status_code=400, detail="Body is required")
-
     # 누가 남겼는지 명확히 남기기 (운영형에서는 UI/SSO 기반으로 더 정교화)
-    note_body = f"{body}"
+    note_body = f"{body_text}"
     requester_id = None
     try:
         requester_id = int(requester.get("id")) if requester.get("id") is not None else None
@@ -281,5 +408,8 @@ async def add_inquiry(
 
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to add inquiry")
+
+    if request.headers.get("HX-Request"):
+        return HTMLResponse('<div class="success">문의가 등록되었습니다.</div>')
 
     return {"ok": True, "ticket_id": ticket_id}

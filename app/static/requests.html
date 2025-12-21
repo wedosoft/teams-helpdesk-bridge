@@ -5,11 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>내 요청함</title>
   <script src="https://res.cdn.office.net/teams-js/2.19.0/js/MicrosoftTeams.min.js"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f5f5; color: #222; padding: 16px; }
-    .container { max-width: 1100px; margin: 0 auto; display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 16px; }
-    .card { background: #fff; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); padding: 16px; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f5f5; color: #222; padding: 16px; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+    .container { max-width: 1100px; margin: 0 auto; display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 16px; flex: 1; height: 100%; overflow: hidden; width: 100%; }
+    .card { background: #fff; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); padding: 16px; display: flex; flex-direction: column; height: 100%; max-height: 100%; }
     h1 { font-size: 18px; margin-bottom: 10px; }
     .muted { color: #666; font-size: 12px; }
     .row { display: flex; gap: 8px; align-items: center; }
@@ -34,272 +35,69 @@
     .notice { margin-top: 10px; font-size: 12px; color: #666; }
     .error { margin-top: 10px; padding: 10px; background: #fff0f0; border: 1px solid #ffd0d0; color: #b20000; border-radius: 8px; font-size: 13px; }
     .success { margin-top: 10px; padding: 10px; background: #eef9f0; border: 1px solid #cfead6; color: #1b5e20; border-radius: 8px; font-size: 13px; }
-    @media (max-width: 960px) { .container { grid-template-columns: 1fr; } }
+    
+    /* Scrollable areas */
+    .scroll-area { flex: 1; overflow-y: auto; }
+
+    @media (max-width: 960px) { 
+        .container { grid-template-columns: 1fr; grid-template-rows: auto 1fr; } 
+        /* 목록은 내용만큼만 차지하되 너무 길어지지 않게 (페이지네이션으로 제어) */
+        .card.list-card { height: auto; max-height: 50vh; }
+    }
   </style>
 </head>
-<body>
+<body hx-headers='{"X-Tenant-ID": localStorage.getItem("teams_tenant_id"), "X-Requester-Email": localStorage.getItem("user_email")}'>
   <div class="container">
-    <div class="card">
+    <div class="card list-card">
       <div class="row">
         <div>
           <h1>내 요청함</h1>
           <div class="muted" id="whoami"></div>
         </div>
         <div class="spacer"></div>
-        <button class="btn ghost" id="btn-refresh">새로고침</button>
+        <button class="btn ghost" hx-get="/api/freshdesk/requests?page=1" hx-target="#list-container">새로고침</button>
       </div>
 
       <div id="list-error" class="error" style="display:none;"></div>
 
-      <table>
-        <thead>
-          <tr>
-            <th style="width: 92px;">상태</th>
-            <th>제목</th>
-            <th style="width: 120px;">업데이트</th>
-            <th style="width: 120px;">동작</th>
-          </tr>
-        </thead>
-        <tbody id="ticket-rows">
-          <tr><td colspan="4" class="muted">불러오는 중...</td></tr>
-        </tbody>
-      </table>
+      <div id="list-container" hx-get="/api/freshdesk/requests?page=1" hx-trigger="load">
+          <div style="padding: 20px; text-align: center; color: #666;">불러오는 중...</div>
+      </div>
+      
       <div class="notice">진행상황 확인과 추가 문의는 이 화면에서 처리됩니다.</div>
     </div>
 
     <div class="card detail">
-      <div class="row">
-        <h1 style="margin-bottom:0;">상세</h1>
-        <div class="spacer"></div>
-        <span class="muted" id="selected-id">선택된 티켓 없음</span>
-      </div>
-
-      <div id="detail-empty" class="muted" style="margin-top:12px;">왼쪽 목록에서 티켓을 선택하세요.</div>
-
-      <div id="detail-body" style="display:none;">
-        <h2 id="detail-subject"></h2>
-        <div class="kv">
-          <div class="k">상태</div><div id="detail-status">-</div>
-          <div class="k">우선순위</div><div id="detail-priority">-</div>
-          <div class="k">담당자</div><div id="detail-responder">-</div>
-          <div class="k">업데이트</div><div id="detail-updated">-</div>
-        </div>
-
-        <div class="desc" id="detail-desc"></div>
-
-        <div style="margin-top:14px;">
-          <div class="row" style="margin-bottom:8px;">
-            <h2 style="font-size:14px; margin:0;">추가 문의(공개 메모)</h2>
+      <div id="detail-container" class="scroll-area">
+          <div class="row">
+            <h1 style="margin-bottom:0;">상세</h1>
             <div class="spacer"></div>
-            <button class="btn danger" id="btn-clear" disabled>지우기</button>
+            <span class="muted">선택된 티켓 없음</span>
           </div>
-          <textarea id="inquiry-body" placeholder="추가로 전달할 내용을 입력하세요."></textarea>
-          <div class="muted" style="margin-top:6px;">추가 문의는 티켓에 공개 메모로 기록됩니다.</div>
-          <div class="row" style="margin-top:10px;">
-            <div class="muted">* 종료된 티켓에는 문의를 추가할 수 없습니다.</div>
-            <div class="spacer"></div>
-            <button class="btn primary" id="btn-send" disabled>추가 문의 보내기</button>
-          </div>
-          <div id="inquiry-msg" class="success" style="display:none;"></div>
-          <div id="inquiry-err" class="error" style="display:none;"></div>
-        </div>
+          <div class="muted" style="margin-top:12px;">왼쪽 목록에서 티켓을 선택하세요.</div>
       </div>
     </div>
   </div>
 
   <script>
-    let tenantId = '';
-    let requesterEmail = '';
-    let selectedTicketId = null;
+    microsoftTeams.app.initialize().then(() => {
+      microsoftTeams.app.getContext().then((context) => {
+        const userEmail = context.user.loginHint || "requestor@wedosoft.net"; // Fallback for POC
+        const tenantId = context.tid; // Teams Tenant ID
+        
+        // HTMX 헤더 설정을 위해 로컬 스토리지나 전역 변수 활용이 어려우므로
+        // htmx:configRequest 이벤트를 사용하여 헤더를 주입합니다.
+        document.body.addEventListener('htmx:configRequest', function(evt) {
+            evt.detail.headers['X-Tenant-ID'] = tenantId;
+            evt.detail.headers['X-Requester-Email'] = userEmail;
+        });
 
-    function show(el, msg) { el.textContent = msg; el.style.display = 'block'; }
-    function hide(el) { el.style.display = 'none'; el.textContent = ''; }
-
-    function formatDate(s) {
-      try { return new Date(s).toLocaleString(); } catch { return s || '-'; }
-    }
-
-    function statusPill(isDone) {
-      return isDone
-        ? '<span class="pill done">완료</span>'
-        : '<span class="pill open">진행중</span>';
-    }
-
-    async function init() {
-      try {
-        await microsoftTeams.app.initialize();
-        const ctx = await microsoftTeams.app.getContext();
-        tenantId = ctx.user?.tenant?.id || '';
-        requesterEmail = (ctx.user?.userPrincipalName || ctx.user?.loginHint || '').trim();
-      } catch (e) {
-        // 로컬 브라우저로 열었을 때 fallback
-        tenantId = (new URLSearchParams(location.search)).get('tenant') || '';
-        requesterEmail = (new URLSearchParams(location.search)).get('email') || '';
-      }
-
-      document.getElementById('whoami').textContent = '';
-      document.getElementById('btn-refresh').addEventListener('click', loadList);
-      document.getElementById('btn-clear').addEventListener('click', () => {
-        document.getElementById('inquiry-body').value = '';
+        document.getElementById("whoami").innerText = userEmail;
+        
+        // 첫 로드 트리거 (헤더 설정 후)
+        htmx.trigger("#list-container", "load");
       });
-      document.getElementById('btn-send').addEventListener('click', sendInquiry);
-
-      await loadList();
-    }
-
-    async function loadList() {
-      const tbody = document.getElementById('ticket-rows');
-      const listErr = document.getElementById('list-error');
-      hide(listErr);
-      tbody.innerHTML = `<tr><td colspan="4" class="muted">불러오는 중...</td></tr>`;
-
-      if (!tenantId || !requesterEmail) {
-        show(listErr, 'Teams 컨텍스트에서 tenant/email을 가져오지 못했습니다. (로컬 테스트: ?tenant=...&email=... 사용)');
-        tbody.innerHTML = `<tr><td colspan="4" class="muted">-</td></tr>`;
-        return;
-      }
-
-      try {
-        const res = await fetch('/api/freshdesk/requests?page=1&per_page=30', {
-          headers: {
-            'X-Tenant-ID': tenantId,
-            'X-Requester-Email': requesterEmail,
-          }
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.detail || `요청 실패 (${res.status})`);
-        }
-        const data = await res.json();
-        const items = data.items || [];
-
-        if (!items.length) {
-          tbody.innerHTML = `<tr><td colspan="4" class="muted">요청이 없습니다.</td></tr>`;
-          return;
-        }
-
-        tbody.innerHTML = items.map(t => `
-          <tr>
-            <td>${statusPill(t.is_done)}</td>
-            <td>
-              <div style="font-weight:600;">${(t.subject || '(제목 없음)').replaceAll('<','&lt;')}</div>
-              <div class="muted">#${t.id}</div>
-            </td>
-            <td>${formatDate(t.updated_at)}</td>
-            <td>
-              <button class="btn ghost" onclick="selectTicket('${t.id}')">상세보기</button>
-            </td>
-          </tr>
-        `).join('');
-
-        const params = new URLSearchParams(location.search);
-        const ticket = params.get('ticket');
-        if (ticket) {
-          await selectTicket(ticket);
-        }
-
-      } catch (e) {
-        show(listErr, e.message || String(e));
-        tbody.innerHTML = `<tr><td colspan="4" class="muted">-</td></tr>`;
-      }
-    }
-
-    async function selectTicket(id) {
-      selectedTicketId = id;
-      document.getElementById('selected-id').textContent = `#${id}`;
-      document.getElementById('detail-empty').style.display = 'none';
-      document.getElementById('detail-body').style.display = 'block';
-      document.getElementById('btn-send').disabled = true;
-      document.getElementById('btn-clear').disabled = false;
-
-      const inquiryMsg = document.getElementById('inquiry-msg');
-      const inquiryErr = document.getElementById('inquiry-err');
-      hide(inquiryMsg); hide(inquiryErr);
-
-      try {
-        const res = await fetch(`/api/freshdesk/requests/${id}`, {
-          headers: {
-            'X-Tenant-ID': tenantId,
-            'X-Requester-Email': requesterEmail,
-          }
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.detail || `요청 실패 (${res.status})`);
-        }
-        const t = await res.json();
-        document.getElementById('detail-subject').textContent = t.subject || '(제목 없음)';
-        document.getElementById('detail-status').textContent = String(t.status ?? '-');
-        document.getElementById('detail-priority').textContent = String(t.priority ?? '-');
-        document.getElementById('detail-responder').textContent = t.responder_name || '미배정';
-        document.getElementById('detail-updated').textContent = formatDate(t.updated_at);
-        document.getElementById('detail-desc').textContent = t.description_text || '';
-
-        const statusText = String(t.status ?? '').trim();
-        const isBlocked = !!t.is_done
-          || statusText === '해결됨'
-          || statusText === '종료'
-          || statusText === 'Resolved'
-          || statusText === 'Closed';
-        const sendBtn = document.getElementById('btn-send');
-        const clearBtn = document.getElementById('btn-clear');
-        const textarea = document.getElementById('inquiry-body');
-        sendBtn.disabled = isBlocked;
-        clearBtn.disabled = isBlocked;
-        textarea.disabled = isBlocked;
-      } catch (e) {
-        show(inquiryErr, e.message || String(e));
-      }
-    }
-
-    async function sendInquiry() {
-      const inquiryMsg = document.getElementById('inquiry-msg');
-      const inquiryErr = document.getElementById('inquiry-err');
-      hide(inquiryMsg); hide(inquiryErr);
-
-      if (!selectedTicketId) {
-        show(inquiryErr, '먼저 티켓을 선택하세요.');
-        return;
-      }
-
-      const body = document.getElementById('inquiry-body').value.trim();
-      if (!body) {
-        show(inquiryErr, '추가 문의 내용을 입력하세요.');
-        return;
-      }
-
-      const btn = document.getElementById('btn-send');
-      btn.disabled = true;
-      btn.textContent = '전송 중...';
-
-      try {
-        const res = await fetch(`/api/freshdesk/requests/${selectedTicketId}/inquiry`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Tenant-ID': tenantId,
-            'X-Requester-Email': requesterEmail,
-          },
-          body: JSON.stringify({ body }),
-        });
-
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.detail || `전송 실패 (${res.status})`);
-        }
-
-        show(inquiryMsg, '추가 문의가 등록되었습니다.');
-        document.getElementById('inquiry-body').value = '';
-        await selectTicket(selectedTicketId, false);
-        await loadList();
-      } catch (e) {
-        show(inquiryErr, e.message || String(e));
-      } finally {
-        btn.textContent = '추가 문의 보내기';
-      }
-    }
-
-    document.addEventListener('DOMContentLoaded', init);
+    });
   </script>
 </body>
 </html>

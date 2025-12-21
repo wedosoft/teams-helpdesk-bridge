@@ -6,7 +6,7 @@ Teams Tab에서 호출하는 테넌트 설정 API
 - 웹훅 URL 생성
 - Graph API 관리자 동의
 """
-from typing import Optional
+from typing import Optional, Union
 from urllib.parse import urlencode
 
 from pydantic import BaseModel, Field
@@ -145,71 +145,191 @@ async def get_tenant_config(
     )
 
 
-@router.post("/config", response_model=TenantResponse)
-async def save_tenant_config(
-    request: TenantSetupRequest,
+@router.get("/tenant-info", response_class=HTMLResponse)
+async def get_tenant_info(
     tenant_id: str = Depends(get_tenant_id_from_header),
-) -> TenantResponse:
+):
+    """HTMX: 테넌트 정보 HTML 반환"""
+    service = get_tenant_service()
+    tenant = await service.get_tenant(tenant_id)
+    
+    status_badge = '<span style="background:#dff6dd;color:#1e4620;padding:2px 8px;border-radius:12px;font-size:12px;">Configured</span>' if tenant else '<span style="background:#fde8e8;color:#9b1c1c;padding:2px 8px;border-radius:12px;font-size:12px;">Not Configured</span>'
+    
+    platform_info = f"<p><strong>Platform:</strong> {tenant.platform.value}</p>" if tenant else ""
+    
+    return f"""
+        <div class="card">
+            <h2>Tenant Information {status_badge}</h2>
+            <p><strong>Tenant ID:</strong> {tenant_id}</p>
+            {platform_info}
+        </div>
+    """
+
+
+@router.get("/platform-fields", response_class=HTMLResponse)
+async def get_platform_fields(platform: str):
+    """HTMX: 플랫폼별 입력 필드 반환"""
+    if platform == "freshchat":
+        return """
+            <div class="form-group">
+                <label>API URL</label>
+                <input type="text" name="freshchat_api_url" value="https://api.freshchat.com/v2" required>
+            </div>
+            <div class="form-group">
+                <label>API Key</label>
+                <input type="password" name="freshchat_api_key" required>
+            </div>
+            <div class="form-group">
+                <label>Inbox ID (Optional)</label>
+                <input type="text" name="freshchat_inbox_id">
+            </div>
+            <div class="form-group">
+                <label>Webhook Public Key (Optional)</label>
+                <input type="text" name="freshchat_webhook_public_key">
+            </div>
+        """
+    elif platform == "zendesk":
+        return """
+            <div class="form-group">
+                <label>Subdomain</label>
+                <input type="text" name="zendesk_subdomain" placeholder="mycompany" required>
+            </div>
+            <div class="form-group">
+                <label>Admin Email</label>
+                <input type="email" name="zendesk_email" required>
+            </div>
+            <div class="form-group">
+                <label>API Token</label>
+                <input type="password" name="zendesk_api_token" required>
+            </div>
+        """
+    elif platform == "freshdesk":
+        return """
+            <div class="form-group">
+                <label>Base URL</label>
+                <input type="text" name="freshdesk_base_url" placeholder="https://domain.freshdesk.com" required>
+            </div>
+            <div class="form-group">
+                <label>API Key</label>
+                <input type="password" name="freshdesk_api_key" required>
+            </div>
+            <div class="form-group">
+                <label>Weight Field Key (Optional)</label>
+                <input type="text" name="freshdesk_weight_field_key" placeholder="cf_weight">
+            </div>
+        """
+    return ""
+
+
+@router.post("/config", response_model=Union[TenantResponse, str])
+async def save_tenant_config(
+    request: Request,
+    tenant_id: str = Depends(get_tenant_id_from_header),
+) -> Union[TenantResponse, HTMLResponse]:
     """테넌트 설정 저장
 
     사용자가 앱 설치 시 필수 값 입력 후 호출
+    Supports both JSON (API) and Form Data (HTMX)
     """
-    # 플랫폼 검증
+    # 1. Parse Request Data
+    content_type = request.headers.get("content-type", "")
+    setup_request: TenantSetupRequest = None
+
+    if "application/json" in content_type:
+        try:
+            data = await request.json()
+            setup_request = TenantSetupRequest(**data)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
+    elif "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        try:
+            form_data = await request.form()
+            data = dict(form_data)
+            
+            # Construct nested objects
+            platform_val = data.get("platform")
+            if platform_val == "freshchat":
+                data["freshchat"] = {
+                    "api_key": data.get("freshchat_api_key"),
+                    "api_url": data.get("freshchat_api_url"),
+                    "inbox_id": data.get("freshchat_inbox_id"),
+                    "webhook_public_key": data.get("freshchat_webhook_public_key"),
+                }
+            elif platform_val == "zendesk":
+                data["zendesk"] = {
+                    "subdomain": data.get("zendesk_subdomain"),
+                    "email": data.get("zendesk_email"),
+                    "api_token": data.get("zendesk_api_token"),
+                }
+            elif platform_val == "freshdesk":
+                data["freshdesk"] = {
+                    "base_url": data.get("freshdesk_base_url"),
+                    "api_key": data.get("freshdesk_api_key"),
+                    "weight_field_key": data.get("freshdesk_weight_field_key"),
+                }
+            
+            setup_request = TenantSetupRequest(**data)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid Form Data: {str(e)}")
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported Content-Type")
+
+    # 2. Validate Platform
     try:
-        platform = Platform(request.platform)
+        platform = Platform(setup_request.platform)
     except ValueError:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid platform: {request.platform}. Use 'freshchat', 'zendesk', or 'freshdesk'.",
+            detail=f"Invalid platform: {setup_request.platform}. Use 'freshchat', 'zendesk', or 'freshdesk'.",
         )
 
-    # 플랫폼별 설정 검증
+    # 3. Validate Platform Config
     platform_config: dict = {}
 
     if platform == Platform.FRESHCHAT:
-        if not request.freshchat:
+        if not setup_request.freshchat:
             raise HTTPException(status_code=400, detail="Freshchat configuration required")
-        if not request.freshchat.api_key:
+        if not setup_request.freshchat.api_key:
             raise HTTPException(status_code=400, detail="Freshchat API key required")
 
         platform_config = {
-            "api_key": request.freshchat.api_key,
-            "api_url": request.freshchat.api_url,
-            "inbox_id": request.freshchat.inbox_id,
-            "webhook_public_key": request.freshchat.webhook_public_key,
+            "api_key": setup_request.freshchat.api_key,
+            "api_url": setup_request.freshchat.api_url,
+            "inbox_id": setup_request.freshchat.inbox_id,
+            "webhook_public_key": setup_request.freshchat.webhook_public_key,
         }
 
     elif platform == Platform.ZENDESK:
-        if not request.zendesk:
+        if not setup_request.zendesk:
             raise HTTPException(status_code=400, detail="Zendesk configuration required")
-        if not request.zendesk.subdomain or not request.zendesk.api_token:
+        if not setup_request.zendesk.subdomain or not setup_request.zendesk.api_token:
             raise HTTPException(status_code=400, detail="Zendesk subdomain and API token required")
 
         platform_config = {
-            "subdomain": request.zendesk.subdomain,
-            "email": request.zendesk.email,
-            "api_token": request.zendesk.api_token,
+            "subdomain": setup_request.zendesk.subdomain,
+            "email": setup_request.zendesk.email,
+            "api_token": setup_request.zendesk.api_token,
         }
     elif platform == Platform.FRESHDESK:
-        if not request.freshdesk:
+        if not setup_request.freshdesk:
             raise HTTPException(status_code=400, detail="Freshdesk configuration required")
-        if not request.freshdesk.base_url or not request.freshdesk.api_key:
+        if not setup_request.freshdesk.base_url or not setup_request.freshdesk.api_key:
             raise HTTPException(status_code=400, detail="Freshdesk base_url and API key required")
 
         platform_config = {
-            "base_url": request.freshdesk.base_url,
-            "api_key": request.freshdesk.api_key,
-            "weight_field_key": request.freshdesk.weight_field_key,
+            "base_url": setup_request.freshdesk.base_url,
+            "api_key": setup_request.freshdesk.api_key,
+            "weight_field_key": setup_request.freshdesk.weight_field_key,
         }
 
-    # 테넌트 생성/업데이트
+    # 4. Save Tenant
     service = get_tenant_service()
     tenant = await service.create_tenant(
         teams_tenant_id=tenant_id,
         platform=platform,
         platform_config=platform_config,
-        bot_name=request.bot_name,
-        welcome_message=request.welcome_message,
+        bot_name=setup_request.bot_name,
+        welcome_message=setup_request.welcome_message,
     )
 
     if not tenant:
@@ -225,11 +345,11 @@ async def save_tenant_config(
         platform=platform.value,
     )
 
-    # Graph API 동의 상태 확인
+    # 5. Check Graph Consent
     graph_service = get_graph_service()
     graph_consent = await graph_service.check_consent_status(tenant_id)
 
-    return TenantResponse(
+    response_data = TenantResponse(
         teams_tenant_id=tenant_id,
         platform=platform.value,
         bot_name=tenant.bot_name,
@@ -238,6 +358,18 @@ async def save_tenant_config(
         is_configured=True,
         graph_consent_granted=graph_consent,
     )
+
+    # 6. Return Response (HTML for HTMX, JSON for API)
+    if request.headers.get("HX-Request"):
+        return HTMLResponse(content=f"""
+            <div class="alert alert-success">
+                <h3>Configuration Saved!</h3>
+                <p><strong>Webhook URL:</strong> {webhook_url}</p>
+                <p>Please register this URL in your {platform.value} settings.</p>
+            </div>
+        """)
+    
+    return response_data
 
 
 @router.delete("/config")

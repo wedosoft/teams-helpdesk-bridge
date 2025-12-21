@@ -25,12 +25,6 @@
   "accentColor": "#5558AF",
   "staticTabs": [
     {
-      "entityId": "admin-settings",
-      "name": "설정",
-      "contentUrl": "https://teams.wedosoft.net/admin/setup",
-      "scopes": ["personal"]
-    },
-    {
       "entityId": "requester-dashboard",
       "name": "내 요청함",
       "contentUrl": "https://teams.wedosoft.net/tab/requests",
