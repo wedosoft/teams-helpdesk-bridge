@@ -32,6 +32,7 @@ class FreshdeskWebhookHandler:
         return True
 
     def parse_webhook(self, payload: dict) -> Optional[WebhookEvent]:
+        logger.info("Freshdesk webhook payload", payload=payload)
         # ticket_id 추출 (여러 케이스 대응)
         ticket_id = (
             payload.get("ticket_id")
