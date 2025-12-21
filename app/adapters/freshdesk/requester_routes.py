@@ -301,14 +301,26 @@ async def get_request_detail(
             <div style="margin-top:14px;">
                 <div class="row" style="margin-bottom:8px;">
                     <h2 style="font-size:14px; margin:0;">추가 문의(공개 메모)</h2>
+                    <span id="inquiry-indicator" class="muted htmx-indicator" style="margin-left:8px; display:none;">전송 중…</span>
                 </div>
-                <form hx-post="/api/freshdesk/requests/{ticket_id}/inquiry" hx-target="#inquiry-result">
+                <form
+                    hx-post="/api/freshdesk/requests/{ticket_id}/inquiry"
+                    hx-target="#inquiry-result"
+                    hx-swap="innerHTML"
+                    hx-disabled-elt="find button"
+                    hx-indicator="#inquiry-indicator"
+                    hx-on::after-request="if(event.detail.successful){{ const ta = this.querySelector('textarea[name=body]'); if(ta){{ ta.value=''; }} }}"
+                >
                     <textarea name="body" placeholder="추가로 전달할 내용을 입력하세요." style="width:100%; min-height:80px; padding:8px; border:1px solid #ddd; border-radius:4px;"></textarea>
                     <div class="muted" style="margin-top:6px; font-size:12px;">추가 문의는 티켓에 공개 메모로 기록됩니다.</div>
                     <div style="margin-top:10px; text-align:right;">
                         <button type="submit" class="btn primary">보내기</button>
                     </div>
                 </form>
+                <style>
+                                    .htmx-indicator {{ display: none; }}
+                                    .htmx-request.htmx-indicator {{ display: inline; }}
+                </style>
                 <div id="inquiry-result"></div>
             </div>
             """
