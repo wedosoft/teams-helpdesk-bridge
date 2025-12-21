@@ -93,12 +93,12 @@
         });
 
         document.getElementById("whoami").innerText = userEmail;
-        
-        // 첫 로드 트리거 (헤더 설정 후)
-        const listContainer = document.getElementById("list-container");
-        listContainer.setAttribute("hx-get", "/api/freshdesk/requests?page=1");
-        htmx.process(listContainer);
-        htmx.trigger(listContainer, "load");
+
+        // 첫 로드: hx-trigger에 의존하지 않고, 헤더 주입 설정 이후 htmx.ajax로 강제 로드
+        htmx.ajax("GET", "/api/freshdesk/requests?page=1", {
+          target: "#list-container",
+          swap: "innerHTML",
+        });
       });
     });
   </script>
