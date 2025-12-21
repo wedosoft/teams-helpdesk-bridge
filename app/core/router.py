@@ -213,11 +213,11 @@ class MessageRouter:
                 if not mapping.greeting_sent:
                     if tenant.platform == Platform.FRESHDESK:
                         case_id = mapping.platform_conversation_id or mapping.platform_conversation_numeric_id or ""
-                        # 관리자가 설정한 환영 메시지가 있으면 사용, 없으면 기본값
-                        if tenant.welcome_message:
-                            welcome_msg = f"{tenant.welcome_message}\n(케이스 번호: {case_id})"
-                        else:
-                            welcome_msg = f"접수되었습니다. (케이스 번호: {case_id})"
+                        # Freshdesk(법무 POC): 접수 완료 안내는 관리자 설정과 무관하게 고정 문구 사용
+                        welcome_msg = (
+                            f"접수되었습니다. (케이스 번호: {case_id})\n"
+                            "진행상황은 ‘내 요청함’ 탭에서 확인하세요."
+                        )
                     else:
                         welcome_msg = tenant.welcome_message or "안녕하세요! 상담원이 곧 연결됩니다."
                     await context.send_activity(welcome_msg)

@@ -60,7 +60,7 @@
 
       <div id="list-error" class="error" style="display:none;"></div>
 
-      <div id="list-container" hx-get="/api/freshdesk/requests?page=1">
+        <div id="list-container">
           <div style="padding: 20px; text-align: center; color: #666;">불러오는 중...</div>
       </div>
       
@@ -95,7 +95,10 @@
         document.getElementById("whoami").innerText = userEmail;
         
         // 첫 로드 트리거 (헤더 설정 후)
-        htmx.trigger("#list-container", "load");
+        const listContainer = document.getElementById("list-container");
+        listContainer.setAttribute("hx-get", "/api/freshdesk/requests?page=1");
+        htmx.process(listContainer);
+        htmx.trigger(listContainer, "load");
       });
     });
   </script>

@@ -128,7 +128,10 @@ async def tab_content():
 @app.get("/tab/requests")
 async def tab_requests():
     """요청자 대시보드 (내 요청함)"""
-    return FileResponse(STATIC_DIR / "requests.html")
+    return FileResponse(
+        STATIC_DIR / "requests.html",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/admin/setup")
