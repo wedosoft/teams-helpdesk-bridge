@@ -61,12 +61,13 @@ class FreshdeskWebhookHandler:
                 raw_data=payload,
             )
 
-        # 메시지 텍스트 추출 (텍스트 필드 우선)
-        text = (
-            payload.get("description_text")
-            or payload.get("body_text")
-            or (payload.get("note") or {}).get("body_text")
-        )
+        # 메시지 텍스트 추출 (최신 conversation의 body_text)
+        text = None
+        if isinstance(payload.get("conversations"), list):
+            for item in reversed(payload["conversations"]):
+                if isinstance(item, dict) and item.get("body_text"):
+                    text = item.get("body_text")
+                    break
 
         actor_type = payload.get("actor_type") or payload.get("actorType") or "agent"
         actor_id = payload.get("actor_id") or payload.get("actorId")
