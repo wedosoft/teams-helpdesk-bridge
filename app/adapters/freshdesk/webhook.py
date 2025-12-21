@@ -61,12 +61,11 @@ class FreshdeskWebhookHandler:
                 raw_data=payload,
             )
 
-        # 메시지 텍스트 추출
+        # 메시지 텍스트 추출 (텍스트 필드 우선)
         text = (
-            payload.get("text")
-            or payload.get("body")
-            or (payload.get("note") or {}).get("body")
-            or (payload.get("message") or {}).get("text")
+            payload.get("description_text")
+            or payload.get("body_text")
+            or (payload.get("note") or {}).get("body_text")
         )
 
         actor_type = payload.get("actor_type") or payload.get("actorType") or "agent"
@@ -90,4 +89,3 @@ class FreshdeskWebhookHandler:
             ),
             raw_data=payload,
         )
-

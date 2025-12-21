@@ -12,6 +12,7 @@
 import asyncio
 import random
 import re
+from urllib.parse import quote
 from typing import Any, Optional
 
 import httpx
@@ -543,11 +544,13 @@ class MessageRouter:
 
             case_id = mapping.platform_conversation_id or mapping.platform_conversation_numeric_id or ""
             notice_type = self._detect_freshdesk_notice_type(message.text or "")
+            tenant_id = self._extract_tenant_id(mapping.conversation_reference or {})
             card = self._build_freshdesk_notice_card(
                 agent_name=agent_name,
                 body=message.text or "",
                 case_id=case_id,
                 notice_type=notice_type,
+                tenant_id=tenant_id,
             )
             await self.bot.send_proactive_message(
                 conversation_reference=mapping.conversation_reference,
@@ -821,9 +824,10 @@ class MessageRouter:
         body: str,
         case_id: str,
         notice_type: str,
+        tenant_id: Optional[str],
     ) -> dict:
         """Freshdesk 에이전트 공개 메모를 공식 알림 카드로 변환"""
-        link = self._build_request_tab_link(case_id)
+        link = self._build_request_tab_link(case_id, tenant_id=tenant_id)
         facts = [
             {"title": "알림 유형", "value": notice_type},
             {"title": "담당자", "value": agent_name or "법무팀"},
@@ -871,11 +875,27 @@ class MessageRouter:
         }
         return card
 
-    def _build_request_tab_link(self, case_id: str) -> Optional[str]:
-        """내 요청함 탭 딥링크 생성 (케이스 상세)"""
-        if not case_id:
-            return "https://teams.wedosoft.net/tab/requests"
-        return f"https://teams.wedosoft.net/tab/requests?ticket={case_id}"
+    def _build_request_tab_link(self, case_id: str, tenant_id: Optional[str] = None) -> Optional[str]:
+        """내 요청함 탭 딥링크 생성"""
+        app_id = "77a6e06c-9d85-428b-ad30-035b9c698eb4"
+        entity_id = "requester-dashboard"
+        web_url = "https://teams.wedosoft.net/tab/requests"
+        _ = case_id
+        tenant_qs = f"&tenantId={quote(tenant_id, safe='')}" if tenant_id else ""
+        return (
+            f"https://teams.microsoft.com/l/entity/{app_id}/{entity_id}"
+            f"?webUrl={quote(web_url, safe='')}"
+            f"&label={quote('내 요청함', safe='')}"
+            f"{tenant_qs}"
+        )
+
+    def _extract_tenant_id(self, conversation_reference: dict) -> Optional[str]:
+        conversation = conversation_reference.get("conversation") or {}
+        if isinstance(conversation, dict):
+            tenant_id = conversation.get("tenantId") or conversation.get("tenant_id")
+            if tenant_id:
+                return str(tenant_id)
+        return None
 
     async def _process_attachment_parallel(
         self,
