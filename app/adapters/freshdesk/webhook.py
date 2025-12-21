@@ -66,16 +66,8 @@ class FreshdeskWebhookHandler:
         # 메시지 텍스트 추출
         text = None
         
-        # 1. body_text (Plain Text 우선)
-        if payload.get("body_text"):
-            text = payload.get("body_text")
-            
-        # 2. description_text (Plain Text 우선)
-        elif payload.get("description_text"):
-            text = payload.get("description_text")
-
-        # 3. 공식 문서: payload.conversations[*].body_text
-        elif isinstance(payload.get("conversations"), list):
+        # 1. 공식 문서: payload.conversations[*].body_text
+        if isinstance(payload.get("conversations"), list):
             # 최신 대화(노트)를 찾기 위해 역순 순회
             # 주의: Freshdesk 웹훅에서 conversations 순서가 보장되지 않을 수 있으므로
             # id나 created_at으로 정렬하는 것이 안전하지만, POC에서는 리스트의 마지막이 최신이라고 가정
@@ -92,9 +84,14 @@ class FreshdeskWebhookHandler:
                     text = item.get("body_text")
                     break
         
-        # 4. text (Fallback - HTML 가능성 있음)
-        elif payload.get("text"):
+        # 2. text (Fallback - 로그에서 확인됨, HTML 포함 가능성 있음)
+        if not text and payload.get("text"):
             text = payload.get("text")
+            # Freshdesk {{ticket.latest_public_comment_text}}가 "이름 : 내용" 형식으로 오는 경우 처리
+            # 예: "우석 이 : 안녕하세요" -> "안녕하세요"
+            if text and isinstance(text, str):
+                # "이름 : " 패턴 제거 (이름은 20자 이내로 가정)
+                text = re.sub(r"^[^:\n]{1,20}\s*:\s*", "", text, count=1)
 
         actor_type = payload.get("actor_type") or payload.get("actorType") or "agent"
         actor_id = payload.get("actor_id") or payload.get("actorId")
