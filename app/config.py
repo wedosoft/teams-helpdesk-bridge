@@ -54,6 +54,23 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "info"
 
+    # LLM (요약)
+    llm_provider: str = "openai_compatible"
+    llm_api_base: str = "https://api.openai.com/v1"
+    llm_api_key: str = ""
+    llm_model: str = "gpt-4o-mini"
+    llm_temperature: float = 0.2
+    llm_timeout: int = 60
+    llm_azure_deployment: str = ""
+    llm_azure_api_version: str = "2024-02-15-preview"
+
+    # OCR
+    ocr_provider: str = "none"
+    ocr_endpoint: str = ""
+    ocr_api_key: str = ""
+    ocr_timeout: int = 60
+    ocr_poll_interval: float = 1.5
+
     # Requester dashboard (PoC)
     # If requesters and agents share the same email, override requester identity with a fixed email.
     # MUST be set when requester dashboard endpoints are used.

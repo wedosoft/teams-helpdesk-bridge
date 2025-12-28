@@ -68,6 +68,60 @@ Freshdesk를 **SSOT(진행/상태/답변)**로 사용하고, Teams는 인테이�
 
 ---
 
+## 최근 완료된 작업 (2025-12-22) - 대화 원문 첨부 + AI 요약/OCR (초기 구현)
+
+### 1) 인테이크 카드에 원문 첨부 필드 추가
+
+- 신규 입력:
+  - `raw_text`: 대화 원문 텍스트 붙여넣기
+  - `raw_attachment_link`: 스크린샷/파일 링크 (이미지 URL일 때 OCR 시도)
+- 기존 `request_detail`은 **선택**으로 변경
+- 구현: `app/teams/bot.py` (`build_legal_intake_card`)
+
+### 2) OCR + LLM 요약 파이프라인 추가
+
+- OCR: Azure Vision Read 연동 (이미지 URL만 지원)
+  - 서비스: `app/services/ocr.py`
+  - 동작: 이미지 URL → OCR → 텍스트 추출 (실패 시 None)
+- LLM 요약: OpenAI-compatible / Azure OpenAI 지원
+  - 서비스: `app/services/llm.py`
+  - 요약 규칙: 객관적 서사형 불릿(누가/언제/무엇을 말했다)
+  - LLM 미설정 시 휴리스틱 요약으로 fallback
+- 인테이크 제출 시:
+  - 원문(텍스트 + OCR 결과) 기반으로 요약 자동 생성
+  - 티켓 본문에 `[요청 요약]`, `[요청 원문]`, `[요청 정보]`, `[요청 내용]` 섹션으로 저장
+  - 완료 카드에 “AI 개요” 섹션 표시
+- 구현: `app/teams/bot.py`
+
+### 3) 환경변수 추가
+
+- LLM/OCR 관련 설정 추가 (자세한 목록은 아래 “선택 환경변수” 참고)
+- `.env.example`, `docs/handover.md`, `app/config.py` 반영
+
+### 4) 설계 논의 요약 (미구현)
+
+- “대화에서 가져오기” 버튼으로 **채팅 목록 표시 → 메시지 범위 선택**을 하려면
+  - Microsoft Graph 채팅 목록/메시지 조회 API가 필요
+  - 이 API는 **delegated 사용자 토큰**이 필수
+  - SSO가 유일한 수단은 아니지만, **사용자 인증/동의(SSO 또는 OAuth 팝업)**는 반드시 필요
+- SSO를 지금 단계에서 피하려면 대안은:
+  - 사용자가 메시지를 **복사/붙여넣기**하거나
+  - **스크린샷 업로드 → OCR 요약**
+  - 또는 Teams에서 **메시지 전달(Forward) → 봇이 버퍼링** 후 첨부
+
+### 5) 향후 작업 후보
+
+- Task Module(모달) + Graph 연동:
+  - 채팅 목록 → 선택 → 범위(블록) 선택 → 첨부
+  - 필요사항: 사용자 인증/동의(OBO or OAuth), Graph 권한 설계
+- OCR 품질 개선:
+  - 이미지 업로드 직접 처리(링크 대신 파일 첨부)
+  - OCR 결과 사용자 수정 UI
+- 요약 품질 향상:
+  - 긴 대화 Chunk 요약 → 통합 요약 파이프라인
+
+---
+
 ## POC 운영/테스트 체크리스트 (Freshdesk 기준)
 
 ### 필수 환경변수
@@ -78,6 +132,16 @@ Freshdesk를 **SSOT(진행/상태/답변)**로 사용하고, Teams는 인테이�
 - `SUPABASE_URL`, `SUPABASE_SECRET_KEY`
 - `ENCRYPTION_KEY`
 - `LOG_LEVEL` (선택)
+
+### 선택 환경변수 (AI 요약/OCR)
+
+- LLM 요약
+  - `LLM_PROVIDER` (`openai_compatible` | `azure_openai`)
+  - `LLM_API_BASE`, `LLM_API_KEY`, `LLM_MODEL`
+  - `LLM_AZURE_DEPLOYMENT`, `LLM_AZURE_API_VERSION` (Azure OpenAI 사용 시)
+- OCR (Azure Vision Read)
+  - `OCR_PROVIDER=azure_vision_read`
+  - `OCR_ENDPOINT`, `OCR_API_KEY`
 
 ### 로컬 실행
 
@@ -308,3 +372,29 @@ fly logs -a teams-helpdesk-bridge
 - [ ] Freshdesk 바이너리 첨부 업로드 지원(또는 링크 기반 UX 고도화)
 - [ ] Freshdesk 첫 인사 메시지 정책 정리(케이스 번호 + 커스텀 welcome_message 조합 등)
 - [ ] 에러 재시도/백오프 및 모니터링/알림 강화
+
+---
+
+## 제미나이 의견 (2025-12-22) - 채팅 원문 선택 기능 구현 검토
+
+사용자가 Task Module에서 채팅 목록을 보고 특정 텍스트를 선택하여 신청서에 추가하는 기능에 대한 기술적 검토 결과입니다.
+
+### 1. 권한 (Permissions)
+- **필수 권한**: `Chat.Read` (Delegated)
+  - 채팅 목록 조회 (`GET /me/chats`) 및 메시지 읽기 (`GET /me/chats/{id}/messages`)를 위해 필수입니다.
+  - `Chat.ReadBasic`은 메시지 내용을 읽을 수 없어 불충분합니다.
+
+### 2. SSO (Single Sign-On)
+- **필수 여부**: **필수**
+  - `Chat.Read`는 위임된 권한(Delegated Permission)이므로, 앱이 아닌 **로그인한 사용자**의 토큰이 필요합니다.
+  - Teams 클라이언트에서 SSO 토큰을 받아 백엔드에서 OBO(On-Behalf-Of) 흐름으로 Graph API 토큰을 획득해야 합니다.
+
+### 3. 관리자 승인 (Admin Consent)
+- **필수 여부**: **필수**
+  - `Chat.Read`는 민감한 권한으로 분류되어, 일반 사용자가 직접 동의할 수 없습니다.
+  - 테넌트 관리자가 Azure AD 또는 Teams 관리 센터에서 **조직 전체 동의(Consent on behalf of your organization)**를 수행해야 합니다.
+
+### 4. UI/UX 제언
+- Task Module 내에서 채팅 메시지를 렌더링하고 텍스트를 선택하게 하는 것은 구현 복잡도가 높습니다.
+- **대안**: **Message Extension** (메시지 더보기 메뉴 > "법무 검토 요청") 방식을 권장합니다.
+  - 별도 권한/SSO 없이도 선택한 메시지의 내용을 앱으로 전달받을 수 있어 구현이 간단하고 UX가 자연스럽습니다.

@@ -32,6 +32,8 @@ from botbuilder.schema import (
 import httpx
 
 from app.config import get_settings
+from app.services.llm import get_llm_service
+from app.services.ocr import get_ocr_service
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -105,6 +107,33 @@ class TeamsBot:
             "우측 하단 '프롬프트 보기'에서 요청 유형을 선택하면 접수 카드가 열립니다. "
             "진행상황과 추가 문의는 '내 요청함' 탭에서 확인해 주세요."
         )
+
+    def _normalize_ai_summary(self, summary: str) -> str:
+        """AI 요약 텍스트 정리 (AI 개요 헤더 제거 + 불릿 정규화)"""
+        if not summary:
+            return ""
+        lines = [line.strip() for line in summary.splitlines() if line.strip()]
+        if lines:
+            head = lines[0].replace(" ", "").lower()
+            if head in {"ai개요", "개요"}:
+                lines = lines[1:]
+        normalized = []
+        for line in lines:
+            normalized.append(line if line.startswith("- ") else f"- {line}")
+        return "\n".join(normalized).strip()
+
+    def _is_image_link(self, url: str) -> bool:
+        lower = (url or "").lower()
+        return lower.endswith((
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".bmp",
+            ".webp",
+            ".tif",
+            ".tiff",
+        ))
 
     def set_message_handler(self, handler: Callable) -> None:
         """메시지 핸들러 설정"""
@@ -217,6 +246,8 @@ class TeamsBot:
             request_detail
             or (submit_data.get("description") or submit_data.get("body") or "").strip()
         )
+        raw_text = (submit_data.get("raw_text") or "").strip()
+        raw_attachment_link = (submit_data.get("raw_attachment_link") or "").strip()
         cc_raw = (submit_data.get("cc_emails") or submit_data.get("cc") or "").strip()
         attachment_link = (submit_data.get("attachment_link") or submit_data.get("attachment_url") or "").strip()
 
@@ -225,7 +256,38 @@ class TeamsBot:
             parts = [p.strip() for p in cc_raw.replace(";", ",").split(",")]
             cc_emails = [p for p in parts if p and "@" in p]
 
-        # 설명 구성 (요청 요약 + 요청 내용)
+        # 원문 입력이 없고 요청 내용도 없으면 거부
+        if not description and not raw_text and not raw_attachment_link:
+            await context.send_activity(
+                "요청 내용 또는 대화 원문(텍스트/이미지 링크)을 입력해 주세요."
+            )
+            return
+
+        # OCR (이미지 링크만 지원 - 설정 없으면 None)
+        ocr_text = None
+        if raw_attachment_link and self._is_image_link(raw_attachment_link):
+            try:
+                ocr_service = get_ocr_service()
+                ocr_text = await ocr_service.extract_text_from_url(raw_attachment_link)
+            except Exception as e:
+                logger.warning("OCR processing failed", error=str(e))
+
+        raw_source_text = "\n\n".join(
+            [text for text in [raw_text, ocr_text] if text]
+        ).strip()
+
+        # AI 요약 생성 (원문이 없으면 요청 내용 기반)
+        ai_summary = ""
+        summary_source = raw_source_text or description
+        if summary_source:
+            try:
+                llm_service = get_llm_service()
+                summary_text = await llm_service.summarize(summary_source)
+                ai_summary = self._normalize_ai_summary(summary_text or "")
+            except Exception as e:
+                logger.warning("LLM summarize failed", error=str(e))
+
+        # 설명 구성 (AI 요약 + 원문 + 요청 내용)
         summary_lines = [
             f"- 유형: {request_type or '미입력'}",
             f"- 거래처/상대방: {counterparty or '미입력'}",
@@ -239,9 +301,28 @@ class TeamsBot:
         if confidentiality:
             summary_lines.append(f"- 기밀 등급: {confidentiality}")
 
-        parts = ["[요청 요약]"]
+        parts: list[str] = []
+
+        if ai_summary:
+            parts.append("[요청 요약]")
+            parts.append("AI 개요")
+            parts.append(ai_summary)
+            parts.append("")
+
+        parts.append("[요청 원문]")
+        if raw_source_text:
+            parts.append(raw_source_text)
+        else:
+            parts.append("(원문 텍스트 없음)")
+        if raw_attachment_link:
+            parts.append("")
+            parts.append(f"원문 링크: {raw_attachment_link}")
+        parts.append("")
+
+        parts.append("[요청 정보]")
         parts.extend(summary_lines)
         parts.append("")
+
         parts.append("[요청 내용]")
         parts.append(description or "(내용 없음)")
 
@@ -275,6 +356,9 @@ class TeamsBot:
                 "due_date": due_date,
                 "priority": priority,
                 "confidentiality": confidentiality,
+                "ai_summary": ai_summary,
+                "raw_text": raw_text,
+                "raw_attachment_link": raw_attachment_link,
                 "force_new_conversation": True,
             },
         )
@@ -282,6 +366,7 @@ class TeamsBot:
         await self._update_intake_card_with_summary(
             context=context,
             submit_data=submit_data,
+            ai_summary=ai_summary,
         )
 
         if self._message_handler:
@@ -370,6 +455,7 @@ class TeamsBot:
         self,
         context: TurnContext,
         submit_data: dict,
+        ai_summary: str = "",
     ) -> None:
         """제출된 인테이크 카드 메시지를 요약 카드로 교체"""
         activity = context.activity
@@ -389,6 +475,7 @@ class TeamsBot:
             counterparty=counterparty,
             due_date=due_date,
             priority=priority,
+            ai_summary=ai_summary,
         )
 
         try:
@@ -1412,12 +1499,37 @@ def build_legal_intake_card(
                 "isMultiline": True,
             },
             {
+                "type": "TextBlock",
+                "text": "대화 원문 첨부 (선택)",
+                "weight": "Bolder",
+                "spacing": "Medium",
+            },
+            {
+                "type": "TextBlock",
+                "text": "Teams 대화 내용을 붙여넣거나 스크린샷/파일 링크를 입력하면 AI가 요약을 자동 생성합니다.",
+                "wrap": True,
+                "isSubtle": True,
+                "spacing": "Small",
+            },
+            {
+                "type": "Input.Text",
+                "id": "raw_text",
+                "label": "대화 원문 (텍스트)",
+                "placeholder": "대화 내용을 그대로 붙여넣기",
+                "isMultiline": True,
+            },
+            {
+                "type": "Input.Text",
+                "id": "raw_attachment_link",
+                "label": "대화 원문 (이미지/파일 링크)",
+                "placeholder": "스크린샷/파일 링크 (OneDrive, SharePoint 등)",
+            },
+            {
                 "type": "Input.Text",
                 "id": "request_detail",
-                "label": "검토 요청 내용",
-                "placeholder": "검토가 필요한 조항/쟁점/질문을 구체적으로 적어주세요.",
+                "label": "검토 요청 내용 (선택)",
+                "placeholder": "원문 첨부 시 비워둘 수 있습니다.",
                 "isMultiline": True,
-                "isRequired": True,
                 **({"value": description_value} if description_value else {}),
             },
             {
@@ -1521,6 +1633,7 @@ def build_legal_intake_summary_card(
     counterparty: str,
     due_date: str,
     priority: str,
+    ai_summary: str = "",
 ) -> dict:
     """접수 완료 후 요약 카드"""
     summary_items = [
@@ -1533,30 +1646,52 @@ def build_legal_intake_summary_card(
     if priority:
         summary_items.append(f"긴급도: {priority}")
 
+    body = [
+        {
+            "type": "TextBlock",
+            "text": "✅ 요청서 제출 완료",
+            "weight": "Bolder",
+            "size": "Medium",
+        },
+        {
+            "type": "TextBlock",
+            "text": "\n".join(summary_items),
+            "wrap": True,
+        },
+    ]
+
+    if ai_summary:
+        body.extend(
+            [
+                {
+                    "type": "TextBlock",
+                    "text": "AI 개요",
+                    "weight": "Bolder",
+                    "spacing": "Medium",
+                },
+                {
+                    "type": "TextBlock",
+                    "text": ai_summary,
+                    "wrap": True,
+                },
+            ]
+        )
+
+    body.append(
+        {
+            "type": "TextBlock",
+            "text": "즉시 답변은 제공되지 않습니다. 진행상황과 추가 문의는 '내 요청함' 탭에서 확인하세요.",
+            "isSubtle": True,
+            "wrap": True,
+            "spacing": "Small",
+        }
+    )
+
     return {
         "type": "AdaptiveCard",
         "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
         "version": "1.4",
-        "body": [
-            {
-                "type": "TextBlock",
-                "text": "✅ 요청서 제출 완료",
-                "weight": "Bolder",
-                "size": "Medium",
-            },
-            {
-                "type": "TextBlock",
-                "text": "\n".join(summary_items),
-                "wrap": True,
-            },
-            {
-                "type": "TextBlock",
-                "text": "즉시 답변은 제공되지 않습니다. 진행상황과 추가 문의는 '내 요청함' 탭에서 확인하세요.",
-                "isSubtle": True,
-                "wrap": True,
-                "spacing": "Small",
-            },
-        ],
+        "body": body,
     }
 
 
